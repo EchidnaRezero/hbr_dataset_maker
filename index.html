@@ -1,0 +1,3302 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>이미지 생성 모델 학습용 캐릭터 BBox 자동 라벨링 파이프라인</title>
+  <meta
+    name="description"
+    content="이미지 생성 모델 학습(LoRA 파인튜닝 · MOSS-Image 등 Layout-Conditioned 포맷)을 위한 55-Class 캐릭터 분류 및 데이터 정제 파이프라인."
+  />
+  <meta name="color-scheme" content="dark" />
+  <style>
+    /* ==========================================================================
+       Apple Dark Mode HIG — Spacious Editorial Design System
+       ========================================================================== */
+    :root {
+      --bg-base: #000000;
+      --bg-alt: #0b0b0d;
+      --bg-card: #161618;
+      --bg-card-elevated: #1d1d1f;
+      --bg-glass: rgba(18, 18, 20, 0.78);
+      --border-hairline: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
+
+      --text-primary: #f5f5f7;
+      --text-secondary: #a1a1a6;
+      --text-tertiary: #6e6e73;
+
+      --accent-blue: #2997ff;
+      --accent-green: #30d158;
+      --accent-orange: #ff9f0a;
+      --accent-purple: #bf5af2;
+      --accent-teal: #64d2ff;
+      --accent-red: #ff453a;
+
+      --radius-md: 20px;
+      --radius-lg: 28px;
+      --radius-pill: 9999px;
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "SF Pro Display", "SF Pro Text", "Noto Sans KR", sans-serif;
+      --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+      --max-w: 1180px;
+      --ease-apple: cubic-bezier(0.28, 0.11, 0.32, 1);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      word-break: keep-all;
+    }
+
+    body {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      transition: opacity 0.2s var(--ease-apple);
+    }
+
+    a:hover {
+      opacity: 0.85;
+    }
+
+    code, pre {
+      font-family: var(--font-mono);
+    }
+
+    .tabular {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .container {
+      width: 100%;
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 28px;
+    }
+
+    /* ==========================================================================
+       Sticky Glass Navigation
+       ========================================================================== */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: 52px;
+      background: var(--bg-glass);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--border-hairline);
+    }
+
+    .nav-inner {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .nav-brand {
+      color: var(--text-primary);
+      font-weight: 600;
+      font-size: 0.92rem;
+      letter-spacing: -0.015em;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 30px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      transition: color 0.2s var(--ease-apple);
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+      opacity: 1;
+    }
+
+    .nav-pill {
+      padding: 6px 14px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+      font-size: 0.78rem;
+      font-weight: 500;
+      border: 1px solid var(--border-hairline);
+    }
+
+    .nav-pill:hover {
+      background: rgba(255, 255, 255, 0.16);
+      opacity: 1;
+    }
+
+    @media (max-width: 760px) {
+      .nav-links { display: none; }
+    }
+
+    /* ==========================================================================
+       Hero — Spacious Apple Product Style
+       ========================================================================== */
+    .hero {
+      padding: 120px 0 96px;
+      text-align: center;
+      background:
+        radial-gradient(ellipse 65% 40% at 50% 0%, rgba(41, 151, 255, 0.13), transparent 72%),
+        var(--bg-base);
+    }
+
+    .eyebrow {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--accent-blue);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 5.8vw, 4.4rem);
+      font-weight: 700;
+      line-height: 1.12;
+      letter-spacing: -0.035em;
+      margin: 0 auto 24px;
+      max-width: 820px;
+      background: linear-gradient(180deg, #ffffff 35%, #9a9aa0 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-lead {
+      font-size: clamp(1.05rem, 1.7vw, 1.28rem);
+      color: var(--text-secondary);
+      max-width: 660px;
+      margin: 0 auto 56px;
+      line-height: 1.6;
+      font-weight: 400;
+    }
+
+    .hero-frame {
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      box-shadow: 0 36px 100px rgba(0, 0, 0, 0.8);
+    }
+
+    .hero-frame .media {
+      cursor: zoom-in;
+      overflow: hidden;
+    }
+
+    .hero-frame img {
+      width: 100%;
+      max-height: 580px;
+      object-fit: cover;
+      transition: transform 0.65s var(--ease-apple);
+    }
+
+    .hero-frame .media:hover img {
+      transform: scale(1.015);
+    }
+
+    .hero-caption {
+      padding: 18px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      text-align: left;
+      font-size: 0.86rem;
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border-hairline);
+    }
+
+    .hero-caption strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    /* Dedicated Visual Problem & Motivation Section (Before -> After) */
+    .ba-grid {
+      display: grid;
+      grid-template-columns: 1fr 48px 1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    @media (max-width: 920px) {
+      .ba-grid {
+        grid-template-columns: 1fr;
+        gap: 24px;
+      }
+      .ba-mid {
+        display: none;
+      }
+    }
+
+    .ba-col {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .ba-label {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .ba-label.before { color: var(--accent-orange); }
+    .ba-label.after { color: var(--accent-green); }
+
+    .ba-mock {
+      background: #0e1118;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .ba-mock.after {
+      border-color: rgba(48, 209, 88, 0.35);
+      background: rgba(48, 209, 88, 0.04);
+    }
+
+    .mock-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.96rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .mock-badge {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      padding: 3px 9px;
+      border-radius: var(--radius-pill);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .mb-warn { background: rgba(255, 69, 58, 0.16); color: var(--accent-red); }
+    .mb-ok { background: rgba(48, 209, 88, 0.16); color: var(--accent-green); }
+
+    .flat-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .flat-tag {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-secondary);
+    }
+
+    .ba-note {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    .ba-note strong {
+      color: var(--text-primary);
+    }
+
+    .ba-mid {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.8rem;
+      color: var(--accent-blue);
+      font-weight: 600;
+    }
+
+    .io-strip {
+      margin-top: 8px;
+      padding: 20px 4px 0;
+      border-top: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .io-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .io-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .io-head strong {
+      font-size: 0.96rem;
+      color: var(--text-primary);
+    }
+
+    .io-head code {
+      font-size: 0.82rem;
+      color: var(--accent-blue);
+    }
+
+    .io-item p {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    /* ==========================================================================
+       Key Metrics Strip (Clean, Open, Uncluttered)
+       ========================================================================== */
+    .metrics-strip {
+      padding: 72px 0;
+      border-top: 1px solid var(--border-hairline);
+      border-bottom: 1px solid var(--border-hairline);
+      background: var(--bg-alt);
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 48px;
+    }
+
+    @media (max-width: 760px) {
+      .metrics-grid {
+        grid-template-columns: 1fr;
+        gap: 36px;
+      }
+    }
+
+    .metric-item .num {
+      font-size: clamp(2.1rem, 3.6vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.1;
+      margin-bottom: 10px;
+      color: var(--text-primary);
+    }
+
+    .metric-item .num.blue { color: var(--accent-blue); }
+    .metric-item .num.green { color: var(--accent-green); }
+
+    .metric-item .label {
+      font-size: 0.94rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    .metric-item .label strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       Section Rhythm
+       ========================================================================== */
+    section {
+      padding: 132px 0;
+    }
+
+    section.alt {
+      background: var(--bg-alt);
+      border-top: 1px solid var(--border-hairline);
+      border-bottom: 1px solid var(--border-hairline);
+    }
+
+    .section-head {
+      max-width: 680px;
+      margin-bottom: 64px;
+    }
+
+    .section-kicker {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-blue);
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-size: clamp(1.9rem, 3.8vw, 3rem);
+      font-weight: 700;
+      line-height: 1.16;
+      letter-spacing: -0.03em;
+      margin-bottom: 18px;
+    }
+
+    .section-desc {
+      font-size: 1.06rem;
+      color: var(--text-secondary);
+      line-height: 1.68;
+    }
+
+    /* ==========================================================================
+       Pipeline Flow (Minimal 4 Steps)
+       ========================================================================== */
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      margin-bottom: 56px;
+    }
+
+    @media (max-width: 880px) {
+      .flow-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 520px) {
+      .flow-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .flow-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 28px 24px;
+    }
+
+    .flow-step {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--accent-blue);
+      margin-bottom: 12px;
+    }
+
+    .flow-card h3 {
+      font-size: 1.04rem;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      margin-bottom: 8px;
+    }
+
+    .flow-card p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.58;
+    }
+
+    /* ==========================================================================
+       Tensor Architecture Diagram (Isometric Wireframe SVG)
+       ========================================================================== */
+    .arch-diagram-shell {
+      background: #0c1017;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: var(--radius-lg);
+      padding: 28px 24px 22px;
+      margin-bottom: 44px;
+      overflow-x: auto;
+    }
+
+    .arch-diagram-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .arch-diagram-head .title {
+      font-size: 0.96rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .arch-diagram-head .hint {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: #f472b6;
+    }
+
+    .arch-svg {
+      width: 100%;
+      min-width: 820px;
+      height: auto;
+      display: block;
+    }
+
+    /* Model Stack & Selection Rationale (3 compact cards) */
+    .stack-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 36px;
+      margin-bottom: 36px;
+    }
+
+    @media (max-width: 860px) {
+      .stack-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .stack-card {
+      background: transparent;
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 0;
+      padding: 22px 4px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .stack-role {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--accent-blue);
+      letter-spacing: 0.04em;
+    }
+
+    .stack-model {
+      font-size: 1.16rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.4;
+    }
+
+    .stack-model code {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--accent-teal);
+    }
+
+    .stack-why {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.62;
+    }
+
+    .stack-why strong {
+      color: var(--text-primary);
+    }
+
+    /* Dataset & Testset Grid */
+    .data-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    @media (max-width: 840px) {
+      .data-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .data-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 32px 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 22px;
+    }
+
+    .data-card h3 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+
+    .step-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .step-list li {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      gap: 12px;
+      align-items: start;
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      line-height: 1.58;
+    }
+
+    .step-num {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: rgba(41, 151, 255, 0.14);
+      color: var(--accent-blue);
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+    }
+
+    .step-list strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .split-boxes {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .split-box {
+      padding: 18px 20px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-hairline);
+    }
+
+    .split-box-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .split-box-head strong {
+      font-size: 0.95rem;
+      color: var(--text-primary);
+    }
+
+    .split-box-head span {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--accent-blue);
+    }
+
+    .split-box p {
+      font-size: 0.86rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    /* Problem / Solution Sub-group Divider */
+    .ps-label {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .ps-label.solution {
+      margin-top: 52px;
+    }
+
+    .ps-pill {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      padding: 5px 12px;
+      border-radius: var(--radius-pill);
+      white-space: nowrap;
+    }
+
+    .ps-pill.prob {
+      background: rgba(255, 159, 10, 0.14);
+      color: var(--accent-orange);
+      border: 1px solid rgba(255, 159, 10, 0.28);
+    }
+
+    .ps-pill.sol {
+      background: rgba(48, 209, 88, 0.14);
+      color: var(--accent-green);
+      border: 1px solid rgba(48, 209, 88, 0.28);
+    }
+
+    .ps-text {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+
+    .ps-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border-hairline);
+    }
+
+    /* Visual Infographic Cards (Danbooru Reality & v1->v3 Timeline) */
+    .info-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 36px;
+      margin-bottom: 32px;
+    }
+
+    @media (max-width: 820px) {
+      .info-grid-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .info-card {
+      background: transparent;
+      border: none;
+      padding: 8px 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .info-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .info-head strong {
+      font-size: 1.08rem;
+      color: var(--text-primary);
+    }
+
+    .info-head code {
+      font-size: 0.88rem;
+      color: var(--accent-blue);
+      white-space: nowrap;
+    }
+
+    .info-sub {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .stack-bar {
+      display: flex;
+      height: 20px;
+      border-radius: 10px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.07);
+      gap: 2px;
+    }
+
+    .stack-bar div {
+      height: 100%;
+    }
+
+    .mini-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+    }
+
+    .mini-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .mini-legend i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .cmp-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .cmp-row {
+      display: grid;
+      grid-template-columns: 112px 1fr 48px;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+    }
+
+    .cmp-row .lbl {
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cmp-track {
+      height: 12px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.07);
+      overflow: hidden;
+    }
+
+    .cmp-fill {
+      height: 100%;
+      border-radius: 6px;
+    }
+
+    .cmp-row .val {
+      text-align: right;
+      color: var(--text-primary);
+    }
+
+    /* Spacious Visual Infographics (Noise Mechanisms & v1->v3 Evolution) */
+    .mech-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 36px;
+      margin-bottom: 40px;
+    }
+
+    @media (max-width: 860px) {
+      .mech-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .mech-card {
+      background: transparent;
+      border: none;
+      padding: 8px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .mech-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .mech-tag {
+      font-family: var(--font-mono);
+      font-size: 0.86rem;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: var(--radius-pill);
+    }
+
+    .mech-count {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .mech-visual {
+      background: rgba(255, 255, 255, 0.03);
+      border: none;
+      border-radius: 16px;
+      padding: 22px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mech-visual svg {
+      width: 100%;
+      max-width: 310px;
+      height: auto;
+      display: block;
+    }
+
+    .mech-desc {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.58;
+    }
+
+    .mech-desc strong {
+      color: var(--text-primary);
+    }
+
+    /* v1 -> v2 -> v3 Spacious Stepper */
+    .evo-grid {
+      display: grid;
+      grid-template-columns: 1fr 28px 1fr 28px 1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin-bottom: 52px;
+    }
+
+    @media (max-width: 860px) {
+      .evo-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+      .evo-arrow {
+        display: none;
+      }
+    }
+
+    .evo-card {
+      background: #11141c;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-md);
+      padding: 26px 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .evo-card.warn {
+      border-color: rgba(255, 69, 58, 0.32);
+    }
+
+    .evo-card.final {
+      background: rgba(48, 209, 88, 0.07);
+      border-color: rgba(48, 209, 88, 0.42);
+    }
+
+    .evo-ver {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    .evo-score {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      color: var(--text-primary);
+    }
+
+    .evo-score.down { color: var(--accent-red); }
+    .evo-score.up { color: var(--accent-green); }
+
+    .evo-bar {
+      display: flex;
+      height: 10px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.07);
+      gap: 2px;
+    }
+
+    .evo-meta {
+      font-size: 0.86rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .evo-meta strong {
+      display: block;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .evo-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      font-size: 1.3rem;
+      font-weight: 600;
+    }
+
+    /* Dataset Chart & Visual Testset Gallery */
+    .chart-shell {
+      background: #0c1017;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: var(--radius-lg);
+      padding: 26px 26px 20px;
+      margin-bottom: 44px;
+    }
+
+    .chart-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .chart-title {
+      font-size: 0.96rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .chart-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .chart-legend i {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      display: inline-block;
+    }
+
+    .chart-svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .chart-bar-g {
+      cursor: pointer;
+    }
+
+    .chart-bar-g:hover rect {
+      opacity: 1 !important;
+      filter: brightness(1.22);
+    }
+
+    .chart-foot {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .chart-readout {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--accent-blue);
+    }
+
+    .testset-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+    }
+
+    @media (max-width: 920px) {
+      .testset-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 540px) {
+      .testset-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .testset-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      transition: border-color 0.25s var(--ease-apple);
+    }
+
+    .testset-card:hover {
+      border-color: var(--border-strong);
+    }
+
+    .testset-thumb {
+      aspect-ratio: 16 / 10;
+      overflow: hidden;
+      cursor: zoom-in;
+      background: #08080a;
+    }
+
+    .testset-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.45s var(--ease-apple);
+    }
+
+    .testset-thumb:hover img {
+      transform: scale(1.03);
+    }
+
+    .testset-body {
+      padding: 14px 16px 16px;
+    }
+
+    .testset-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .testset-meta strong {
+      font-size: 0.9rem;
+      color: var(--text-primary);
+    }
+
+    .testset-meta code {
+      font-size: 0.74rem;
+      color: var(--accent-blue);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .testset-body p {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      line-height: 1.48;
+    }
+
+    .mini-bullets {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .mini-bullets li {
+      font-size: 0.94rem;
+      color: var(--text-secondary);
+      padding-left: 16px;
+      position: relative;
+      line-height: 1.55;
+    }
+
+    .mini-bullets li::before {
+      content: "·";
+      position: absolute;
+      left: 0;
+      color: var(--accent-blue);
+      font-weight: 700;
+    }
+
+    .mini-bullets strong {
+      color: var(--text-primary);
+    }
+
+    /* Safety-Valve Full-Width 2D Inequality Decision Plane */
+    .valve-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      margin: 48px 0;
+    }
+
+    .plane-shell {
+      background: #0c1017;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-lg);
+      padding: 28px 30px 22px;
+      overflow-x: auto;
+    }
+
+    .plane-head {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 18px;
+      font-size: 0.96rem;
+    }
+
+    .plane-head strong {
+      color: var(--text-primary);
+    }
+
+    .plane-head code {
+      font-size: 0.82rem;
+      color: var(--accent-teal);
+    }
+
+    .plane-svg {
+      width: 100%;
+      min-width: 680px;
+      height: auto;
+      display: block;
+    }
+
+    .valve-legend {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+    }
+
+    @media (max-width: 920px) {
+      .valve-legend {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 540px) {
+      .valve-legend {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .vl-item {
+      background: transparent;
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 0;
+      padding: 16px 4px 4px;
+    }
+
+    .vl-top {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .vl-rule {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+    }
+
+    .vl-item p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    .vl-item strong {
+      color: var(--text-primary);
+    }
+
+    /* Layout Split */
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 36px;
+      align-items: center;
+    }
+
+    .split.wide-left {
+      grid-template-columns: 1.25fr 1fr;
+    }
+
+    @media (max-width: 840px) {
+      .split, .split.wide-left {
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+    }
+
+    /* Code Preview */
+    .code-box {
+      background: #111113;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+
+    .code-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 18px;
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      color: var(--text-tertiary);
+      border-bottom: 1px solid var(--border-hairline);
+    }
+
+    .code-box pre {
+      padding: 22px;
+      font-size: 0.8rem;
+      line-height: 1.65;
+      color: #e5e5ea;
+      overflow-x: auto;
+    }
+
+    .tok-k { color: #64d2ff; }
+    .tok-s { color: #30d158; }
+    .tok-n { color: #ff9f0a; }
+
+    /* ==========================================================================
+       Figures & Visuals
+       ========================================================================== */
+    .figure {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      transition: border-color 0.25s var(--ease-apple);
+    }
+
+    .figure:hover {
+      border-color: var(--border-strong);
+    }
+
+    .figure-media {
+      position: relative;
+      cursor: zoom-in;
+      overflow: hidden;
+      background: #08080a;
+    }
+
+    .figure-media img {
+      width: 100%;
+      transition: transform 0.5s var(--ease-apple);
+    }
+
+    .figure-media:hover img {
+      transform: scale(1.016);
+    }
+
+    .figure-cap {
+      padding: 16px 22px;
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      border-top: 1px solid var(--border-hairline);
+    }
+
+    .figure-cap strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       Safety-Valve Clean Tier List
+       ========================================================================== */
+    .tier-list {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+      margin: 56px 0;
+    }
+
+    @media (max-width: 920px) {
+      .tier-list {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 540px) {
+      .tier-list {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .tier-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 22px 20px;
+    }
+
+    .tier-tag {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: var(--radius-pill);
+      margin-bottom: 12px;
+    }
+
+    .t-teal { background: rgba(100, 210, 255, 0.14); color: var(--accent-teal); }
+    .t-purple { background: rgba(191, 90, 242, 0.14); color: var(--accent-purple); }
+    .t-red { background: rgba(255, 69, 58, 0.14); color: var(--accent-red); }
+    .t-green { background: rgba(48, 209, 88, 0.14); color: var(--accent-green); }
+    .t-orange { background: rgba(255, 159, 10, 0.14); color: var(--accent-orange); }
+
+    .tier-rule {
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .tier-desc {
+      font-size: 0.84rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .gallery-2x2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+    }
+
+    @media (max-width: 760px) {
+      .gallery-2x2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ==========================================================================
+       Apple Segmented Control (Embedding Analysis)
+       ========================================================================== */
+    .segmented {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 4px;
+      background: #1c1c1e;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-pill);
+      margin-bottom: 44px;
+    }
+
+    .seg-btn {
+      padding: 10px 20px;
+      border-radius: var(--radius-pill);
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: inherit;
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s var(--ease-apple);
+    }
+
+    .seg-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .seg-btn.active {
+      background: #3a3a3c;
+      color: #ffffff;
+    }
+
+    .tab-panel {
+      display: none;
+      animation: fadeUp 0.35s var(--ease-apple);
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Full-width Embedding Tab Summary Grids */
+    .emb-points-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin-top: 28px;
+    }
+
+    @media (max-width: 820px) {
+      .emb-points-3 {
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+    }
+
+    .emb-point {
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      padding-top: 16px;
+      font-size: 0.94rem;
+      color: var(--text-secondary);
+      line-height: 1.58;
+    }
+
+    .emb-point strong {
+      display: block;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .pair-grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    @media (max-width: 920px) {
+      .pair-grid-4 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 540px) {
+      .pair-grid-4 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .pair-tile {
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+      padding-top: 14px;
+    }
+
+    .pair-tile .names {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .pair-tile .sub {
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .pair-tile .score {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+
+    .stack-full {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Section 07 Next Steps List */
+    .next-list {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .next-item {
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+      padding-top: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .next-item.primary {
+      border-top: 2px solid var(--accent-blue);
+    }
+
+    .next-k {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent-blue);
+      letter-spacing: 0.04em;
+    }
+
+    .next-item strong {
+      font-size: 1.08rem;
+      color: var(--text-primary);
+    }
+
+    .next-item p {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    /* Minimal Pair List */
+    .pair-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .pair-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-hairline);
+      font-size: 0.88rem;
+    }
+
+    .pair-names {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .pair-score {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--accent-green);
+      white-space: nowrap;
+    }
+
+    .pair-cos {
+      color: var(--text-tertiary);
+      margin-right: 10px;
+    }
+
+    /* ==========================================================================
+       Grad-CAM Failure Notes (3 Clean Columns)
+       ========================================================================== */
+    .notes-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-top: 32px;
+    }
+
+    @media (max-width: 820px) {
+      .notes-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .note {
+      padding: 20px 4px 4px;
+      border-radius: 0;
+      background: transparent;
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .note h4 {
+      font-size: 1.04rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .note p {
+      font-size: 0.94rem;
+      color: var(--text-secondary);
+      line-height: 1.62;
+    }
+
+    .subsection-title {
+      font-size: 1.35rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 72px 0 24px;
+    }
+
+    /* ==========================================================================
+       Footer
+       ========================================================================== */
+    footer {
+      padding: 64px 0 80px;
+      border-top: 1px solid var(--border-hairline);
+      font-size: 0.85rem;
+      color: var(--text-tertiary);
+    }
+
+    .footer-inner {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .footer-links a {
+      color: var(--text-secondary);
+    }
+
+    /* ==========================================================================
+       Lightbox Modal
+       ========================================================================== */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      background: rgba(0, 0, 0, 0.88);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .lightbox.open {
+      display: flex;
+    }
+
+    .lightbox-inner {
+      max-width: min(1220px, 94vw);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .lightbox-img {
+      max-width: 100%;
+      max-height: 80vh;
+      border-radius: 16px;
+      border: 1px solid var(--border-strong);
+      object-fit: contain;
+    }
+
+    .lightbox-caption {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      text-align: center;
+      max-width: 720px;
+    }
+
+    .lb-btn {
+      position: fixed;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid var(--border-strong);
+      background: rgba(29, 29, 31, 0.85);
+      color: var(--text-primary);
+      font-size: 1.25rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .lb-btn:hover { background: rgba(58, 58, 60, 0.95); }
+    .lb-close { top: 24px; right: 24px; }
+    .lb-prev { left: 24px; top: 50%; transform: translateY(-50%); }
+    .lb-next { right: 24px; top: 50%; transform: translateY(-50%); }
+
+    /* Scroll Reveal */
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.7s var(--ease-apple), transform 0.7s var(--ease-apple);
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .reveal { opacity: 1; transform: none; transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sticky Glass Navigation -->
+  <nav class="nav" aria-label="주 내비게이션">
+    <div class="container nav-inner">
+      <a href="#top" class="nav-brand">HBR Vision Pipeline</a>
+      <ul class="nav-links">
+        <li><a href="#collection">Collection</a></li>
+        <li><a href="#training">Training</a></li>
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#safety-valve">Safety-Valve</a></li>
+        <li><a href="#embedding">Embedding</a></li>
+        <li><a href="#gradcam">Grad-CAM</a></li>
+      </ul>
+      <a
+        class="nav-pill"
+        href="https://huggingface.co/Kamome33/hbr-character-classifier"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Hugging Face ↗
+      </a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header id="top" class="hero">
+    <div class="container">
+      <div class="eyebrow">Instance-Level BBox Auto-Labeling Pipeline</div>
+      <h1>이미지 생성 모델 학습용<br />캐릭터 BBox 자동 라벨링 파이프라인</h1>
+      <p class="hero-lead">
+        이미지 생성 모델 학습(LoRA 파인튜닝 · MOSS-Image 등 Layout-Conditioned 데이터 포맷)에 바로 투입할 수 있는
+        캐릭터 라벨과 인물별 BBox 좌표를 확보하기 위한 헤븐 번즈 레드(55명) 인스턴스 분류 파이프라인입니다.
+      </p>
+
+      <div class="hero-frame reveal">
+        <div
+          class="media"
+          data-lightbox="docs/assets/bbox_multi_6chars.jpg"
+          data-caption="6인 동시 BBox Detection & Classification (Still_AC14_04_10_01_001): 6명 전원 ACCEPT (conf 0.77~0.98)."
+        >
+          <img
+            src="docs/assets/bbox_multi_6chars.jpg"
+            alt="6인 동시 BBox Detection & Classification 결과"
+          />
+        </div>
+        <div class="hero-caption">
+          <span><strong>6인 동시 Instance BBox 검출·분류</strong> · Person/Head Pairing + 1,536-D Linear Probe</span>
+          <span class="tabular" style="color: var(--accent-green);">6/6 ACCEPT · conf 0.77–0.98</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Practical Key Metrics -->
+  <div class="metrics-strip">
+    <div class="container metrics-grid reveal tabular">
+      <div class="metric-item">
+        <div class="num blue">99.23%</div>
+        <div class="label">
+          <strong>55-Class 5-Fold CV (v3)</strong><br />
+          Frozen ViT-Base 위 ~630 KB Linear Probe (CPU 22초 학습)
+        </div>
+      </div>
+      <div class="metric-item">
+        <div class="num">7,173장</div>
+        <div class="label">
+          <strong><code>ACCEPT</code> 확정 생성 모델 학습 풀</strong><br />
+          수집 10,903장 중 pHash 중복 717장 및 노이즈 분리 (15,264 BBox)
+        </div>
+      </div>
+      <div class="metric-item">
+        <div class="num green">79.31 → 87.72%</div>
+        <div class="label">
+          <strong>최하위 Long-Tail 개선 (<code>akagi_rumi</code>)</strong><br />
+          초기 솔로 29장 희소 캐릭터 → 다인 마이닝 후 57장 확보
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 0: Dedicated Visual Problem & Goal (Before -> After) -->
+  <section id="motivation">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">Problem &amp; Goal</div>
+        <h2 class="section-title">왜 분류기와 인스턴스 BBox가 필요한가</h2>
+        <p class="section-desc">
+          Danbooru와 게임 공식 스틸컷 모두 <strong>인물별 좌표(BBox)가 없고</strong>, 공식 스틸컷에는 <strong>캐릭터 태그마저 없습니다</strong>.
+          이미지 생성 모델 학습에 바로 쓸 수 있는 구조화 데이터를 만들기 위해 검출 + 분류 파이프라인을 구축했습니다.
+        </p>
+      </div>
+
+      <div class="ba-grid reveal">
+        <!-- Left: Before (Raw Sources Limitations) -->
+        <div class="ba-col">
+          <div class="ba-label before">BEFORE · 원천 데이터의 한계</div>
+
+          <div class="ba-mock">
+            <div class="mock-head">
+              <span>Danbooru 다인 일러스트 (전체의 59.1%)</span>
+              <span class="mock-badge mb-warn">태그 O · BBox X</span>
+            </div>
+            <div
+              class="figure-media"
+              style="border-radius: 10px; overflow: hidden;"
+              data-lightbox="docs/assets/before_danbooru_multi.jpg"
+              data-caption="Danbooru 다인 일러스트 예시 (post #10519481 · artist: suimei_(ramebi3)): 이미지 단위 태그만 존재하고 인물별 BBox 좌표가 없습니다."
+            >
+              <img src="docs/assets/before_danbooru_multi.jpg" alt="Danbooru 다인 일러스트 원천 예시" style="width:100%; height:auto;" loading="lazy" />
+            </div>
+            <div class="flat-tags">
+              <span class="flat-tag" style="color: var(--accent-teal);">artist:suimei_(ramebi3)</span>
+              <span class="flat-tag">kayamori_ruka</span>
+              <span class="flat-tag">izumi_yuki</span>
+              <span class="flat-tag">higuchi_seika</span>
+              <span class="flat-tag" style="color: var(--accent-red);">bbox: null</span>
+            </div>
+            <p class="ba-note">
+              평면 태그만 존재 → <strong>누가 화면 어느 위치에 있는지 알 수 없어</strong> 다인 VLM 캡셔닝·Layout 포맷 구성 불가.
+            </p>
+          </div>
+
+          <div class="ba-mock">
+            <div class="mock-head">
+              <span>게임 공식 스토리 스틸컷 · 무라벨(Unlabeled)</span>
+              <span class="mock-badge mb-warn">태그 X · BBox X</span>
+            </div>
+            <div
+              class="figure-media"
+              style="border-radius: 10px; overflow: hidden;"
+              data-lightbox="docs/assets/before_official_raw.jpg"
+              data-caption="게임 공식 스토리 스틸컷 원본(Still_AC14_04_10_01_001.png): 파일명 외에 캐릭터 라벨과 BBox 정보가 전혀 없는 무라벨 상태."
+            >
+              <img src="docs/assets/before_official_raw.jpg" alt="무라벨 게임 공식 스토리 스틸컷 원본 예시" style="width:100%; height:auto;" loading="lazy" />
+            </div>
+            <div class="flat-tags">
+              <span class="flat-tag">Still_AC14_04_10_01_001.png</span>
+              <span class="flat-tag" style="color: var(--accent-red);">tags: [] · bbox: null</span>
+            </div>
+          </div>
+
+          <div class="ba-mock">
+            <div class="mock-head">
+              <span>기존 애니 태거 (Naive Camie-v2) · 범용 VLM</span>
+              <span class="mock-badge mb-warn">42/55명 태그 없음</span>
+            </div>
+            <div>
+              <div class="stack-bar" aria-label="Camie-v2 vocab coverage: 13 of 55">
+                <div style="width: 23.6%; background: #2997ff;"></div>
+                <div style="width: 76.4%; background: rgba(255, 69, 58, 0.45);"></div>
+              </div>
+              <div class="mini-legend" style="margin-top: 8px;">
+                <span><i style="background:#2997ff;"></i>사전 존재 13명 (23.6%)</span>
+                <span><i style="background:#ff453a;"></i>출력 불가 42명 (76.4%)</span>
+              </div>
+            </div>
+            <p class="ba-note">
+              기존 애니 태거·VLM은 HBR 지원 자체가 미미하며, <code>Camie-v2</code>도 헤드 학습 전엔 <strong>42명(76.4%) 출력 불가</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="ba-mid" aria-hidden="true">→</div>
+
+        <!-- Right: After (Pipeline Output — 1:1 Correspondence) -->
+        <div class="ba-col">
+          <div class="ba-label after">AFTER · 파이프라인 출력 (BBox + Verified ID)</div>
+
+          <div class="ba-mock after">
+            <div class="mock-head">
+              <span>Danbooru 3인 → 인물별 BBox + ID 1:1 매칭</span>
+              <span class="mock-badge mb-ok">3/3 ACCEPT · 0.96–0.97</span>
+            </div>
+            <div
+              class="figure-media"
+              style="border-radius: 10px; overflow: hidden;"
+              data-lightbox="docs/assets/after_danbooru_multi_bbox.jpg"
+              data-caption="Danbooru 다인 일러스트 파이프라인 출력 (post #10519481 · artist: suimei_(ramebi3)): kayamori_ruka (0.97), izumi_yuki (0.97), higuchi_seika (0.96) 3명 전원 전신+머리 BBox 매핑 완료."
+            >
+              <img src="docs/assets/after_danbooru_multi_bbox.jpg" alt="Danbooru 3인 BBox 매핑 출력 예시" style="width:100%; height:auto;" loading="lazy" />
+            </div>
+            <p class="ba-note">
+              <strong>① VLM 캡셔닝 정합성:</strong> 인물별 좌표와 캐릭터 ID를 함께 넘겨 외형·행동 묘사 혼동 방지.
+            </p>
+            <div class="code-box" style="margin-top: 2px;">
+              <pre style="padding: 12px 14px; font-size: 0.76rem; line-height: 1.5;">{ <span class="tok-k">"items"</span>: [
+  { <span class="tok-k">"char"</span>: <span class="tok-s">"kayamori_ruka"</span>, <span class="tok-k">"bbox"</span>: [<span class="tok-n">2</span>, <span class="tok-n">22</span>, <span class="tok-n">334</span>, <span class="tok-n">597</span>] },
+  { <span class="tok-k">"char"</span>: <span class="tok-s">"izumi_yuki"</span>,    <span class="tok-k">"bbox"</span>: [<span class="tok-n">334</span>, <span class="tok-n">19</span>, <span class="tok-n">556</span>, <span class="tok-n">434</span>] },
+  { <span class="tok-k">"char"</span>: <span class="tok-s">"higuchi_seika"</span>, <span class="tok-k">"bbox"</span>: [<span class="tok-n">581</span>, <span class="tok-n">32</span>, <span class="tok-n">847</span>, <span class="tok-n">597</span>] }
+] }</pre>
+            </div>
+          </div>
+
+          <div class="ba-mock after">
+            <div class="mock-head">
+              <span>무라벨 공식 스틸컷 → 6인 자동 라벨링 + Layout JSON</span>
+              <span class="mock-badge mb-ok">6/6 ACCEPT · 0.77–0.98</span>
+            </div>
+            <div
+              class="figure-media"
+              style="border-radius: 10px; overflow: hidden;"
+              data-lightbox="docs/assets/bbox_multi_6chars.jpg"
+              data-caption="파이프라인 출력 예시: 무라벨 6인 공식 일러스트에서 인물별 BBox와 캐릭터 ID를 1:1 매핑해 ACCEPT 확정."
+            >
+              <img src="docs/assets/bbox_multi_6chars.jpg" alt="6인 동시 BBox 매핑 출력 예시" style="width:100%; height:auto;" loading="lazy" />
+            </div>
+            <p class="ba-note">
+              <strong>② Layout-Conditioned 생성(MOSS-Image 등):</strong> <code>items[].bbox</code> + <code>caption</code> JSON으로 직결.
+            </p>
+            <div class="code-box" style="margin-top: 2px;">
+              <pre style="padding: 12px 14px; font-size: 0.76rem; line-height: 1.5;">{ <span class="tok-k">"items"</span>: [
+  { <span class="tok-k">"caption"</span>: <span class="tok-s">"ooshima_ichiko..."</span>, <span class="tok-k">"bbox"</span>: [<span class="tok-n">-210</span>, <span class="tok-n">-320</span>, <span class="tok-n">340</span>, <span class="tok-n">-80</span>] },
+  { <span class="tok-k">"caption"</span>: <span class="tok-s">"ooshima_niina..."</span>,  <span class="tok-k">"bbox"</span>: [<span class="tok-n">-195</span>, <span class="tok-n">-60</span>,  <span class="tok-n">350</span>, <span class="tok-n">180</span>] }
+] }</pre>
+            </div>
+          </div>
+
+          <div class="io-strip tabular">
+            <div class="io-item">
+              <div class="io-head">
+                <strong>분류기 학습 대상</strong>
+                <code>8,543 crops · 55-Class</code>
+              </div>
+              <p>Danbooru 태그 기반 학습셋 (Solo 4,345 + 다인 마이닝 4,198)</p>
+            </div>
+            <div class="io-item">
+              <div class="io-head">
+                <strong>실전 적용 · 평가</strong>
+                <code>327 images</code>
+              </div>
+              <p>무라벨 공식 스틸컷 자동 분류 + 콜라보·외형 변형·배경 군중 수동 검토 격리 검증</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 1: Data Collection & Noise Filtering -->
+  <section id="collection" class="alt">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">01 · Data Collection &amp; Filtering</div>
+        <h2 class="section-title">Danbooru 원천 데이터 실태 및 노이즈 정제</h2>
+        <p class="section-desc">
+          <code>heaven_burns_red</code> 태그 10,953건(2026.11 기준)을 공식 API(<code>posts.json</code>)로 전수 수집한 결과와,
+          중복·만화·타 작품 혼입을 제거하는 3단계 정제 구조입니다.
+        </p>
+      </div>
+
+      <!-- PROBLEM: Real Danbooru Snapshot Infographics (10,953 posts) -->
+      <div class="ps-label reveal">
+        <span class="ps-pill prob">PROBLEM</span>
+        <span class="ps-text">원천 데이터 병목 (Danbooru 2026.11 기준 · 10,953건 실측)</span>
+        <span class="ps-line" aria-hidden="true"></span>
+      </div>
+
+      <div class="info-grid-3 reveal tabular">
+        <!-- Infographic 1: Solo vs Multi -->
+        <div class="info-card">
+          <div class="info-head">
+            <strong>Solo vs 다인 씬 비율</strong>
+            <code>10,953 posts</code>
+          </div>
+          <div>
+            <div class="stack-bar" aria-label="Solo 40.9% vs Multi 59.1%">
+              <div style="width: 40.9%; background: #2997ff;"></div>
+              <div style="width: 59.1%; background: #30d158;"></div>
+            </div>
+            <div class="mini-legend" style="margin-top: 10px;">
+              <span><i style="background:#2997ff;"></i>Solo 40.9% (4,481)</span>
+              <span><i style="background:#30d158;"></i>Multi 59.1% (6,472)</span>
+            </div>
+          </div>
+          <div class="info-sub">솔로만 쓰면 전체 데이터의 59% 유실</div>
+        </div>
+
+        <!-- Infographic 2: ~58x Long-Tail Gap (Pure HBR) -->
+        <div class="info-card">
+          <div class="info-head">
+            <strong>캐릭터별 태그 수 편차</strong>
+            <code>~58× gap</code>
+          </div>
+          <div class="cmp-bars">
+            <div class="cmp-row">
+              <span class="lbl">kayamori_ruka</span>
+              <div class="cmp-track"><div class="cmp-fill" style="width: 100%; background: #2997ff;"></div></div>
+              <span class="val">2,274</span>
+            </div>
+            <div class="cmp-row">
+              <span class="lbl">ooshima_minori</span>
+              <div class="cmp-track"><div class="cmp-fill" style="width: 5.1%; background: #ff9f0a;"></div></div>
+              <span class="val">116</span>
+            </div>
+            <div class="cmp-row">
+              <span class="lbl">akagi_rumi</span>
+              <div class="cmp-track"><div class="cmp-fill" style="width: 2.2%; background: #ff9f0a;"></div></div>
+              <span class="val">39</span>
+            </div>
+          </div>
+          <div class="info-sub">주연 대비 소수·신규 HBR 캐릭터 극심한 희소성</div>
+        </div>
+
+        <!-- Infographic 3: Noise inside heaven_burns_red tag -->
+        <div class="info-card">
+          <div class="info-head">
+            <strong>원천 태그 내 노이즈 비중</strong>
+            <code>22.1% 필터 대상</code>
+          </div>
+          <div>
+            <div class="stack-bar" aria-label="Clean vs Comic vs Duplicate vs External">
+              <div style="width: 77.9%; background: rgba(255,255,255,0.16);"></div>
+              <div style="width: 10.7%; background: #ff9f0a;"></div>
+              <div style="width: 6.5%; background: #64d2ff;"></div>
+              <div style="width: 4.9%; background: #bf5af2;"></div>
+            </div>
+            <div class="mini-legend" style="margin-top: 10px;">
+              <span><i style="background:#ff9f0a;"></i>만화 1,167</span>
+              <span><i style="background:#64d2ff;"></i>중복 717</span>
+              <span><i style="background:#bf5af2;"></i>타작품 539</span>
+            </div>
+          </div>
+          <div class="info-sub"><code>heaven_burns_red</code>만 검색해도 콜라보·만화 혼입</div>
+        </div>
+      </div>
+
+      <!-- SOLUTION: How the 3 Noises Are Filtered (Spacious Visual Infographics) -->
+      <div class="ps-label solution reveal">
+        <span class="ps-pill sol">SOLUTION</span>
+        <span class="ps-text">노이즈 정제 메커니즘</span>
+        <span class="ps-line" aria-hidden="true"></span>
+      </div>
+
+      <div class="mech-grid reveal tabular">
+        <!-- 1. pHash Visual Infographic -->
+        <div class="mech-card">
+          <div class="mech-top">
+            <span class="mech-tag t-teal">① pHash 중복 제거</span>
+            <span class="mech-count">717장 제외</span>
+          </div>
+          <div class="mech-visual">
+            <svg viewBox="0 0 260 88" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="pHash 64비트 해시 비교 도식">
+              <!-- Left 4x4 hash matrix -->
+              <g transform="translate(8, 12)">
+                <rect x="0" y="0" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="17" y="0" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="34" y="0" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="51" y="0" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="0" y="17" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="17" y="17" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="34" y="17" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="51" y="17" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="0" y="34" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="17" y="34" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="34" y="34" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="51" y="34" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="0" y="51" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="17" y="51" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="34" y="51" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="51" y="51" width="14" height="14" rx="2" fill="#1e293b" />
+              </g>
+              <!-- Center Hamming badge -->
+              <rect x="92" y="29" width="76" height="30" rx="15" fill="rgba(100,210,255,0.14)" stroke="#64d2ff" stroke-width="1.2" />
+              <text x="130" y="48" text-anchor="middle" fill="#f5f5f7" font-family="SF Mono, monospace" font-size="11" font-weight="600">d ≤ 4</text>
+              <!-- Right 4x4 hash matrix (1 bit diff in red) -->
+              <g transform="translate(186, 12)">
+                <rect x="0" y="0" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="17" y="0" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="34" y="0" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="51" y="0" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="0" y="17" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="17" y="17" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="34" y="17" width="14" height="14" rx="2" fill="#ff453a" opacity="0.9" />
+                <rect x="51" y="17" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="0" y="34" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="17" y="34" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="34" y="34" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="51" y="34" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="0" y="51" width="14" height="14" rx="2" fill="#1e293b" />
+                <rect x="17" y="51" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="34" y="51" width="14" height="14" rx="2" fill="#64d2ff" opacity="0.85" />
+                <rect x="51" y="51" width="14" height="14" rx="2" fill="#1e293b" />
+              </g>
+            </svg>
+          </div>
+          <div class="mech-desc">
+            <strong>64-bit DCT 지문 비교</strong> — 리사이즈·압축·미세 크롭 재업로드를 <code>Hamming ≤ 4</code>로 자동 제거
+          </div>
+        </div>
+
+        <!-- 2. Comic / 4koma Visual Infographic -->
+        <div class="mech-card">
+          <div class="mech-top">
+            <span class="mech-tag t-orange">② 만화·4컷 분리</span>
+            <span class="mech-count">1,167건 · 학습 제외</span>
+          </div>
+          <div class="mech-visual">
+            <svg viewBox="0 0 260 88" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="만화 4컷 말풍선 메타 플래깅 도식">
+              <!-- 4-panel manga wireframe -->
+              <g transform="translate(24, 10)">
+                <rect x="0" y="0" width="38" height="30" rx="4" fill="#1e293b" stroke="#ff9f0a" stroke-width="1.2" />
+                <rect x="44" y="0" width="38" height="30" rx="4" fill="#1e293b" stroke="#ff9f0a" stroke-width="1.2" />
+                <rect x="0" y="36" width="38" height="30" rx="4" fill="#1e293b" stroke="#ff9f0a" stroke-width="1.2" />
+                <rect x="44" y="36" width="38" height="30" rx="4" fill="#1e293b" stroke="#ff9f0a" stroke-width="1.2" />
+                <ellipse cx="62" cy="14" rx="10" ry="7" fill="rgba(255,159,10,0.35)" stroke="#ff9f0a" stroke-width="1" />
+              </g>
+              <text x="128" y="49" text-anchor="middle" fill="#64748b" font-size="16">→</text>
+              <rect x="150" y="20" width="96" height="48" rx="10" fill="rgba(255,159,10,0.12)" stroke="#ff9f0a" stroke-width="1.2" />
+              <text x="198" y="40" text-anchor="middle" fill="#fdba74" font-family="SF Mono, monospace" font-size="10.5" font-weight="600">is_comic</text>
+              <text x="198" y="57" text-anchor="middle" fill="#f5f5f7" font-family="SF Mono, monospace" font-size="10">학습 제외</text>
+            </svg>
+          </div>
+          <div class="mech-desc">
+            <strong>분류기 학습셋에서 제외</strong> — <code>comic · 4koma</code>는 별도 플래깅 (※ 미학습 상태의 만화 일반화 결과는 <a href="#comic-eval">07 · Domain Generalization ↓</a> 참고)
+          </div>
+        </div>
+
+        <!-- 3. Collab Cross-Check Visual Infographic -->
+        <div class="mech-card">
+          <div class="mech-top">
+            <span class="mech-tag t-purple">③ 콜라보 교차 검증</span>
+            <span class="mech-count">타 작품 539건</span>
+          </div>
+          <div class="mech-visual">
+            <svg viewBox="0 0 260 88" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="HBR 신뢰도와 Camie ONNX 교차 검증 도식">
+              <!-- Signal 1: HBR low -->
+              <text x="12" y="26" fill="#94a3b8" font-family="SF Mono, monospace" font-size="10">HBR-55</text>
+              <rect x="64" y="16" width="84" height="12" rx="6" fill="rgba(255,255,255,0.07)" />
+              <rect x="64" y="16" width="22" height="12" rx="6" fill="#ff453a" />
+              <text x="155" y="26" fill="#ff453a" font-family="SF Mono, monospace" font-size="10">0.21</text>
+
+              <!-- Signal 2: Camie ONNX high -->
+              <text x="12" y="64" fill="#94a3b8" font-family="SF Mono, monospace" font-size="10">Camie</text>
+              <rect x="64" y="54" width="84" height="12" rx="6" fill="rgba(255,255,255,0.07)" />
+              <rect x="64" y="54" width="82" height="12" rx="6" fill="#bf5af2" />
+              <text x="155" y="64" fill="#e9d5ff" font-family="SF Mono, monospace" font-size="10">0.99</text>
+
+              <!-- Result pill -->
+              <rect x="190" y="24" width="62" height="40" rx="10" fill="rgba(191,90,242,0.16)" stroke="#bf5af2" stroke-width="1.2" />
+              <text x="221" y="42" text-anchor="middle" fill="#e9d5ff" font-family="SF Mono, monospace" font-size="10" font-weight="600">EXT</text>
+              <text x="221" y="55" text-anchor="middle" fill="#f5f5f7" font-family="SF Mono, monospace" font-size="9">격리</text>
+            </svg>
+          </div>
+          <div class="mech-desc">
+            <strong>ONNX 이중 확인</strong> — 외부 인물 BBox만 <code>EXT_COLLAB</code> 격리해 동반 HBR 캐릭터 보존
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 2: Classifier Training Distribution, v1->v3 Evolution & Evaluation Sets -->
+  <section id="training">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">02 · Classifier Training &amp; Evaluation</div>
+        <h2 class="section-title">55-Class Long-Tail 보강(v1 → v3) 및 평가셋 구성</h2>
+        <p class="section-desc">
+          솔로 데이터만으로는 희소 클래스 편차가 커서 다인 일러스트 크롭을 추가 마이닝(<code>v3</code>)했고,
+          분류기 학습셋과 도메인이 분리된 327장으로 실전 일반화를 검증했습니다.
+        </p>
+      </div>
+
+      <!-- Real 55-Class Long-Tail Distribution Chart -->
+      <div class="chart-shell reveal">
+        <div class="chart-head">
+          <span class="chart-title">분류기 학습 데이터 55개 클래스 분포 · Solo (4,345) + 다인 마이닝 (4,198) = 8,543 crops</span>
+          <div class="chart-legend tabular">
+            <span><i style="background: #2997ff;"></i>Solo (v2)</span>
+            <span><i style="background: #30d158;"></i>+Hungarian 다인 크롭 (v3)</span>
+            <span><i style="background: #ff9f0a;"></i>Long-Tail 주요 대상</span>
+          </div>
+        </div>
+
+        <svg id="dist-chart" class="chart-svg" viewBox="0 0 1000 245" role="img" aria-label="55개 클래스 Solo 및 다인 크롭 샘플 분포 막대 그래프"></svg>
+
+        <div class="chart-foot">
+          <span>막대에 마우스를 올리면 캐릭터별 Solo / Multi 샘플 수를 확인할 수 있습니다. (상한 캡 <code>max_per_class = 250</code>)</span>
+          <span class="chart-readout tabular" id="chart-readout">희소 Long-Tail 예시 — akagi_rumi: Solo 29 + Multi 28 = 57</span>
+        </div>
+      </div>
+
+      <!-- v1 -> v2 -> v3 Spacious Visual Stepper (Zero Text Overlap) -->
+      <div class="evo-grid reveal tabular">
+        <div class="evo-card">
+          <div>
+            <div class="evo-ver">v1 · 초기 프로토타입</div>
+            <div class="evo-score">97.53%</div>
+          </div>
+          <div class="evo-bar">
+            <div style="width: 12.3%; background: #64748b;"></div>
+          </div>
+          <div class="evo-meta">
+            <strong>Solo 1,053장 · 54-Class</strong>
+            소수 캐릭터(<code>akagi_rumi</code> 등) 누락
+          </div>
+        </div>
+
+        <div class="evo-arrow" aria-hidden="true">→</div>
+
+        <div class="evo-card warn">
+          <div>
+            <div class="evo-ver" style="color: var(--accent-orange);">v2 · 전수 Solo + _other 실험</div>
+            <div class="evo-score down">96.90% ↓</div>
+          </div>
+          <div class="evo-bar">
+            <div style="width: 50.8%; background: #2997ff;"></div>
+          </div>
+          <div class="evo-meta">
+            <strong>Solo 4,345장 · 56 → 55-Class</strong>
+            <code>_other</code> 폐기 → 5-Tier Safety-Valve 도입
+          </div>
+        </div>
+
+        <div class="evo-arrow" style="color: var(--accent-green);" aria-hidden="true">→</div>
+
+        <div class="evo-card final">
+          <div>
+            <div class="evo-ver" style="color: var(--accent-green);">v3 · 최종 (다인 크롭 마이닝)</div>
+            <div class="evo-score up">99.23% ↑</div>
+          </div>
+          <div class="evo-bar">
+            <div style="width: 50.8%; background: #2997ff;"></div>
+            <div style="width: 49.2%; background: #30d158;"></div>
+          </div>
+          <div class="evo-meta">
+            <strong>Solo 4,345 + Multi 4,198 = 8,543장</strong>
+            최하위 Long-Tail(<code>akagi_rumi</code>) 79.3 → 87.7%
+          </div>
+        </div>
+      </div>
+
+      <!-- Visual Testset Examples (What the test sets actually contain) -->
+      <h3 style="font-size: 1.15rem; font-weight: 600; letter-spacing: -0.015em; margin-bottom: 18px;" class="reveal">
+        평가셋 유형별 구성 및 예시 (총 327장 · 분류기 학습셋과 도메인 분리)
+      </h3>
+
+      <div class="testset-grid reveal tabular">
+        <div class="testset-card">
+          <div
+            class="testset-thumb"
+            data-lightbox="docs/assets/bbox_multi_6chars.jpg"
+            data-caption="다인 씬 평가 예시: 한 화면에 2~6명이 동시 등장하는 일러스트에서 인물별 BBox 분리 및 분류 검증."
+          >
+            <img src="docs/assets/bbox_multi_6chars.jpg" alt="다인 씬 테스트셋 예시" loading="lazy" />
+          </div>
+          <div class="testset-body">
+            <div class="testset-meta">
+              <strong>다인 씬 (2~6인)</strong>
+              <code>25장+</code>
+            </div>
+            <p>한 화면 다수 인물 동시 검출·페어링 및 개별 식별 검증</p>
+          </div>
+        </div>
+
+        <div class="testset-card">
+          <div
+            class="testset-thumb"
+            data-lightbox="docs/assets/safety_collab_angelbeats.jpg"
+            data-caption="외부 작품 콜라보·코스프레 평가 예시: 타 작품 캐릭터가 학습 대상 캐릭터와 함께 등장할 때 오분류 차단 검증."
+          >
+            <img src="docs/assets/safety_collab_angelbeats.jpg" alt="외부 콜라보 테스트셋 예시" loading="lazy" />
+          </div>
+          <div class="testset-body">
+            <div class="testset-meta">
+              <strong>타 작품 콜라보 · 코스프레</strong>
+              <code>45장</code>
+            </div>
+            <p>외부 작품 캐릭터·타 작품 의상 혼입 시 오분류 격리 검증</p>
+          </div>
+        </div>
+
+        <div class="testset-card">
+          <div
+            class="testset-thumb"
+            data-lightbox="docs/assets/failure_reference_comparison.jpg"
+            data-caption="공식 스틸컷 도메인 시프트 예시: 샘플이 충분한 인기 캐릭터(Izumi Yuki · Asakura Karen 등)라도 소품(헬멧)·안경 미착용·의상 누락 시 발생하는 외형 변형 검증."
+          >
+            <img src="docs/assets/failure_reference_comparison.jpg" alt="공식 스틸컷 외형 변형 및 도메인 시프트 예시" loading="lazy" />
+          </div>
+          <div class="testset-body">
+            <div class="testset-meta">
+              <strong>외형 변형 · 희소 부대</strong>
+              <code>108장+</code>
+            </div>
+            <p>인기 캐의 소품·안경/의상 누락 도메인 시프트 + 희소 부대(<code>31D·31F·31X</code>) 평가</p>
+          </div>
+        </div>
+
+        <div class="testset-card">
+          <div
+            class="testset-thumb"
+            data-lightbox="docs/assets/safety_crowd_mask.jpg"
+            data-caption="배경 군중 및 신규 희소 캐릭터 평가 예시: 초소형 배경 인물 마스킹 및 구축 시점 신규 캐릭터(HNaruse 등)의 저신뢰 격리 검증."
+          >
+            <img src="docs/assets/safety_crowd_mask.jpg" alt="배경 군중 및 신규 희소 캐릭터 예시" loading="lazy" />
+          </div>
+          <div class="testset-body">
+            <div class="testset-meta">
+              <strong>배경 군중 · 신규 희소 OOD</strong>
+              <code>149장</code>
+            </div>
+            <p>초소형 배경 인물 마스킹 및 구축 시점 신규 희소 캐릭터(<code>HNaruse</code> 등) 보존</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 3: Architecture & Tensor Flow -->
+  <section id="architecture" class="alt">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">03 · Architecture &amp; Tensor Flow</div>
+        <h2 class="section-title">Person/Head 검출 + Frozen ViT-Base Linear Probe</h2>
+        <p class="section-desc">
+          원본 이미지에서 전신과 머리 BBox를 1:1로 매칭한 뒤, Frozen <code>Camie-v2</code> (ViT-Base, 86M)의
+          두 768-D 임베딩을 결합해 <strong>~630 KB Linear Head</strong>로 55개 클래스를 분류합니다.
+        </p>
+      </div>
+
+      <!-- Model Stack & Selection Rationale -->
+      <div class="stack-grid reveal">
+        <div class="stack-card">
+          <div class="stack-role">01 · DETECTION</div>
+          <div class="stack-model">
+            deepghs Anime YOLO<br />
+            <code>애니메이션 전신·머리 전용 검출기 (ONNX)</code>
+          </div>
+          <p class="stack-why">
+            범용 COCO 검출기 대신 애니메이션 화풍에 특화된 경량 YOLO로 전신·머리 BBox를 1:1 페어링.
+          </p>
+        </div>
+
+        <div class="stack-card">
+          <div class="stack-role">02 · BACKBONE (FROZEN)</div>
+          <div class="stack-model">
+            Camie-v2 Tagger<br />
+            <code>ViT-Base (86M) · 애니메이션 사전학습</code>
+          </div>
+          <p class="stack-why">
+            출력 사전엔 13/55명뿐이지만 백본 특징 공간은 55명 외형을 잘 분리 → 임베딩 추출에 활용하고 원본 ONNX 헤드는 콜라보 교차 검증에 재사용.
+          </p>
+        </div>
+
+        <div class="stack-card">
+          <div class="stack-role">03 · CLASSIFIER HEAD</div>
+          <div class="stack-model">
+            L2 Linear Probe<br />
+            <code>선형 로지스틱 회귀 (~630 KB · CPU 22초)</code>
+          </div>
+          <p class="stack-why">
+            소수 클래스(20~50장) 과적합을 막기 위해 백본을 고정 · <code>person+head</code>(99.23%)가 단일 크롭(97.85~98.64%)보다 우수.
+          </p>
+        </div>
+      </div>
+
+      <!-- Isometric Wireframe Tensor Diagram (SVG) -->
+      <div class="arch-diagram-shell reveal">
+        <div class="arch-diagram-head">
+          <span class="title">End-to-End Tensor Flow · Person/Head Pairing + Frozen ViT-Base + Grad-CAM 역전파</span>
+          <span class="hint">Person [768] ⊕ Head [768] → [1536] → Linear(55)</span>
+        </div>
+
+        <svg class="arch-svg" viewBox="0 0 1040 375" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="아키텍처 텐서 구조 다이어그램">
+          <defs>
+            <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+            </marker>
+            <marker id="arr-slate" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+            </marker>
+            <marker id="arr-pink" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#f43f5e" />
+            </marker>
+          </defs>
+
+          <!-- 1. Input Image Cube [3, H, W] -->
+          <g transform="translate(22, 72)">
+            <rect x="0" y="16" width="66" height="66" fill="rgba(56,189,248,0.06)" stroke="#38bdf8" stroke-width="1.8" />
+            <polygon points="0,16 14,4 80,4 66,16" fill="rgba(56,189,248,0.10)" stroke="#38bdf8" stroke-width="1.5" />
+            <polygon points="66,16 80,4 80,70 66,82" fill="rgba(56,189,248,0.04)" stroke="#38bdf8" stroke-width="1.5" />
+            <line x1="22" y1="16" x2="22" y2="82" stroke="rgba(56,189,248,0.32)" stroke-width="1" />
+            <line x1="44" y1="16" x2="44" y2="82" stroke="rgba(56,189,248,0.32)" stroke-width="1" />
+            <line x1="0" y1="38" x2="66" y2="38" stroke="rgba(56,189,248,0.32)" stroke-width="1" />
+            <line x1="0" y1="60" x2="66" y2="60" stroke="rgba(56,189,248,0.32)" stroke-width="1" />
+            <text x="38" y="112" text-anchor="middle" fill="#f5f5f7" font-size="14.5" font-weight="600">원본 일러스트</text>
+            <text x="38" y="133" text-anchor="middle" fill="#38bdf8" font-family="SF Mono, monospace" font-size="13.5" font-weight="600">[3, H, W]</text>
+            <text x="38" y="153" text-anchor="middle" fill="#94a3b8" font-size="12">pHash 중복 제거 후</text>
+          </g>
+
+          <!-- Arrow 1 -> 2 -->
+          <line x1="112" y1="118" x2="156" y2="118" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)" />
+
+          <!-- 2. Dual YOLO ONNX Detectors + Pairing -->
+          <g transform="translate(164, 42)">
+            <rect x="0" y="0" width="154" height="58" rx="8" fill="#151b26" stroke="#64748b" stroke-width="1.4" />
+            <text x="77" y="25" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">전신(Person) YOLO</text>
+            <text x="77" y="45" text-anchor="middle" fill="#94a3b8" font-family="SF Mono, monospace" font-size="12">[1, 3, 640, 640] → N</text>
+
+            <rect x="0" y="78" width="154" height="58" rx="8" fill="#151b26" stroke="#64748b" stroke-width="1.4" />
+            <text x="77" y="103" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">머리·얼굴(Head) YOLO</text>
+            <text x="77" y="123" text-anchor="middle" fill="#94a3b8" font-family="SF Mono, monospace" font-size="12">[1, 3, 640, 640] → M</text>
+
+            <text x="77" y="164" text-anchor="middle" fill="#f5f5f7" font-size="14" font-weight="600">1:1 BBox Pairing</text>
+            <text x="77" y="184" text-anchor="middle" fill="#94a3b8" font-size="12">인물 전신 · 얼굴 크롭</text>
+          </g>
+
+          <!-- Arrows 2 -> 3 -->
+          <path d="M 324 71 L 354 71 L 354 104 L 378 104" stroke="#64748b" stroke-width="1.7" marker-end="url(#arr-slate)" />
+          <path d="M 324 149 L 354 149 L 354 132 L 378 132" stroke="#64748b" stroke-width="1.7" marker-end="url(#arr-slate)" />
+
+          <!-- 3. Frozen Camie-v2 ViT-Base Blocks -->
+          <g transform="translate(388, 68)">
+            <rect x="0" y="18" width="52" height="62" fill="rgba(148,163,184,0.06)" stroke="#64748b" stroke-width="1.5" />
+            <polygon points="0,18 14,6 66,6 52,18" fill="rgba(148,163,184,0.10)" stroke="#64748b" stroke-width="1.3" />
+            <polygon points="52,18 66,6 66,68 52,80" fill="rgba(148,163,184,0.04)" stroke="#64748b" stroke-width="1.3" />
+            <line x1="26" y1="18" x2="26" y2="80" stroke="rgba(148,163,184,0.25)" />
+            <line x1="0" y1="49" x2="52" y2="49" stroke="rgba(148,163,184,0.25)" />
+
+            <line x1="72" y1="46" x2="90" y2="46" stroke="#64748b" stroke-width="1.5" />
+
+            <!-- Spatial Feature Map A -->
+            <g transform="translate(96, 4)">
+              <rect x="0" y="16" width="38" height="58" fill="rgba(244,63,94,0.10)" stroke="#f43f5e" stroke-width="1.8" />
+              <polygon points="0,16 26,0 64,0 38,16" fill="rgba(244,63,94,0.15)" stroke="#f43f5e" stroke-width="1.5" />
+              <polygon points="38,16 64,0 64,58 38,74" fill="rgba(244,63,94,0.06)" stroke="#f43f5e" stroke-width="1.5" />
+              <line x1="13" y1="16" x2="13" y2="74" stroke="rgba(244,63,94,0.35)" />
+              <line x1="26" y1="16" x2="26" y2="74" stroke="rgba(244,63,94,0.35)" />
+              <line x1="0" y1="36" x2="38" y2="36" stroke="rgba(244,63,94,0.35)" />
+              <line x1="0" y1="55" x2="38" y2="55" stroke="rgba(244,63,94,0.35)" />
+            </g>
+
+            <text x="80" y="116" text-anchor="middle" fill="#f5f5f7" font-size="14" font-weight="600">Frozen ViT-Base (86M)</text>
+            <text x="80" y="137" text-anchor="middle" fill="#fb7185" font-family="SF Mono, monospace" font-size="13" font-weight="600">A: [768, 32, 32]</text>
+            <text x="80" y="157" text-anchor="middle" fill="#94a3b8" font-size="12">입력 512×512 · patch16</text>
+          </g>
+
+          <!-- Arrow 3 -> 4 -->
+          <line x1="558" y1="118" x2="606" y2="118" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)" />
+
+          <!-- 4. Concat + L2 Norm 1D Vector [1536] -->
+          <g transform="translate(620, 52)">
+            <rect x="0" y="0" width="24" height="15" fill="rgba(56,189,248,0.18)" stroke="#38bdf8" stroke-width="1.3" />
+            <rect x="0" y="19" width="24" height="15" fill="rgba(56,189,248,0.18)" stroke="#38bdf8" stroke-width="1.3" />
+            <rect x="0" y="38" width="24" height="15" fill="rgba(56,189,248,0.18)" stroke="#38bdf8" stroke-width="1.3" />
+            <line x1="-6" y1="60" x2="30" y2="60" stroke="#94a3b8" stroke-dasharray="3 2" />
+            <rect x="0" y="67" width="24" height="15" fill="rgba(168,85,247,0.20)" stroke="#c084fc" stroke-width="1.3" />
+            <rect x="0" y="86" width="24" height="15" fill="rgba(168,85,247,0.20)" stroke="#c084fc" stroke-width="1.3" />
+            <rect x="0" y="105" width="24" height="15" fill="rgba(168,85,247,0.20)" stroke="#c084fc" stroke-width="1.3" />
+
+            <text x="12" y="148" text-anchor="middle" fill="#f5f5f7" font-size="14" font-weight="600">Concat + L2</text>
+            <text x="12" y="169" text-anchor="middle" fill="#38bdf8" font-family="SF Mono, monospace" font-size="13" font-weight="600">[1536]</text>
+          </g>
+
+          <!-- Arrow 4 -> 5 -->
+          <line x1="660" y1="118" x2="736" y2="118" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)" />
+          <text x="698" y="102" text-anchor="middle" fill="#e2e8f0" font-family="SF Mono, monospace" font-size="13" font-weight="600">Linear</text>
+          <text x="698" y="140" text-anchor="middle" fill="#94a3b8" font-family="SF Mono, monospace" font-size="12">~630 KB</text>
+
+          <!-- 5. 55-Class Logits Bar Chart -->
+          <g transform="translate(748, 66)">
+            <rect x="0" y="0" width="44" height="14" fill="rgba(148,163,184,0.14)" stroke="#64748b" stroke-width="1.2" />
+            <rect x="0" y="20" width="28" height="14" fill="rgba(148,163,184,0.14)" stroke="#64748b" stroke-width="1.2" />
+            <rect x="0" y="40" width="112" height="19" fill="rgba(244,63,94,0.24)" stroke="#f43f5e" stroke-width="1.8" />
+            <text x="122" y="54" fill="#fda4af" font-family="SF Mono, monospace" font-size="14" font-weight="700">y_c (0.99)</text>
+            <rect x="0" y="65" width="38" height="14" fill="rgba(148,163,184,0.14)" stroke="#64748b" stroke-width="1.2" />
+            <rect x="0" y="85" width="20" height="14" fill="rgba(148,163,184,0.14)" stroke="#64748b" stroke-width="1.2" />
+
+            <text x="60" y="128" text-anchor="middle" fill="#f5f5f7" font-size="14" font-weight="600">Pure HBR-55 Logits</text>
+            <text x="60" y="149" text-anchor="middle" fill="#30d158" font-family="SF Mono, monospace" font-size="13" font-weight="600">[55] → 5-Tier</text>
+          </g>
+
+          <!-- Grad-CAM Dashed Backprop Arrow (Cleanly below text, zero overlap) -->
+          <path
+            d="M 804 126 L 804 294 L 506 294 L 506 244"
+            stroke="#f43f5e"
+            stroke-width="2"
+            stroke-dasharray="7 5"
+            fill="none"
+            marker-end="url(#arr-pink)"
+          />
+          <text x="655" y="320" text-anchor="middle" fill="#fda4af" font-family="SF Mono, monospace" font-size="13.5" font-weight="600">
+            ← ∂y_c / ∂A · Contrastive Δw 역전파 (Grad-CAM)
+          </text>
+
+          <text x="520" y="356" text-anchor="middle" fill="#94a3b8" font-size="12.5">
+            ※ 추론 시 원본 Camie-v2 ONNX 태거(eprob)와 BBox 면적 비율(area_pct)을 병렬 교차 검증해 5-Tier Safety-Valve로 라우팅
+          </text>
+        </svg>
+      </div>
+
+      <div class="split reveal">
+        <div>
+          <h3 style="font-size: 1.3rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px;">
+            Precision-First &amp; Layout-Grounded 출력
+          </h3>
+          <ul class="mini-bullets">
+            <li><strong>인스턴스 1:1 매핑</strong> — 인물별 BBox·캐릭터 ID를 SQLite에 저장해 VLM 캡셔닝 혼동 방지</li>
+            <li><strong>MOSS-Image JSON 직결</strong> — <code>yxyx</code> / <code>abs_centralized</code> 레이아웃 포맷 자동 변환</li>
+            <li><strong>보수적 편입</strong> — 손·발 클로즈업이나 모호한 뒷모습은 <code>REVIEW</code> / <code>NO_BOX</code>로 분리</li>
+          </ul>
+        </div>
+
+        <div class="code-box">
+          <div class="code-bar">
+            <span>MOSS-Image Layout JSON Output</span>
+            <span>yxyx · abs_centralized</span>
+          </div>
+          <pre>{
+  <span class="tok-k">"summary"</span>: {
+    <span class="tok-k">"caption"</span>: <span class="tok-s">"Six sisters of the Ooshima family..."</span>
+  },
+  <span class="tok-k">"items"</span>: [
+    {
+      <span class="tok-k">"label"</span>: <span class="tok-s">"object"</span>,
+      <span class="tok-k">"caption"</span>: <span class="tok-s">"ooshima_ichiko smiling..."</span>,
+      <span class="tok-k">"bbox"</span>: [<span class="tok-n">-210</span>, <span class="tok-n">-320</span>, <span class="tok-n">340</span>, <span class="tok-n">-80</span>]
+    },
+    {
+      <span class="tok-k">"label"</span>: <span class="tok-s">"object"</span>,
+      <span class="tok-k">"caption"</span>: <span class="tok-s">"ooshima_niina standing..."</span>,
+      <span class="tok-k">"bbox"</span>: [<span class="tok-n">-195</span>, <span class="tok-n">-60</span>, <span class="tok-n">350</span>, <span class="tok-n">180</span>]
+    }
+  ]
+}</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4: Open-Set Safety-Valve -->
+  <section id="safety-valve">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">04 · Open-Set Isolation</div>
+        <h2 class="section-title">기타(<code>_other</code>) 클래스 실패 및 5-Tier 필터링 기준</h2>
+        <p class="section-desc">
+          초기(v2)에는 콜라보·배경·엑스트라 등 <strong>학습 대상 55명이 아닌 인물 전체를 56번째 기타(<code>_other</code>) 클래스</strong>로 묶어 학습했으나,
+          외형이 제각각이라 공간 전역에 흩어지며 정상 HBR 확률을 잠식(97.53% → 96.90%)해 폐기하고, 아래 5-Tier 규칙으로 분리했습니다.
+        </p>
+      </div>
+
+      <figure class="figure reveal">
+        <div
+          class="figure-media"
+          data-lightbox="docs/assets/tsne_hbr_vs_other.png"
+          data-caption="HBR vs _other 2D t-SNE 분포: _other(×)는 단일 군집을 이루지 못하고 공간 전역에 분산되어 소수 HBR 군집 경계를 침범합니다."
+        >
+          <img
+            src="docs/assets/tsne_hbr_vs_other.png"
+            alt="HBR 군집과 전역에 분산된 _other 샘플 t-SNE"
+            loading="lazy"
+          />
+        </div>
+        <figcaption class="figure-cap">
+          <strong><code>_other</code> 클래스의 구조적 한계</strong> — Open-Set 샘플(<code>×</code>)이 단일 군집을 이루지 못하고 소수 클래스 군집 경계를 침범합니다.
+        </figcaption>
+      </figure>
+
+      <!-- 5-Tier Safety-Valve: Self-Contained Full-Width 2D Inequality Decision Plane -->
+      <div class="valve-panel reveal">
+        <div class="plane-shell">
+          <div class="plane-head">
+            <strong>5-Tier Safety-Valve 결정 평면 (Pre-Gate + 2D 부등식 영역)</strong>
+            <code>x = HBR-55 conf · y = Camie-v2 ONNX eprob</code>
+          </div>
+          <svg class="plane-svg" viewBox="0 0 960 530" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pre-Gate CROWD_MASK 및 HBR conf와 Camie ONNX eprob 2차원 부등식 결정 영역 그래프">
+            <!-- Pre-Gate Banner (CROWD_MASK) -->
+            <rect x="96" y="10" width="820" height="46" rx="10" fill="rgba(100, 210, 255, 0.11)" stroke="rgba(100, 210, 255, 0.4)" stroke-width="1.2" />
+            <text x="116" y="38" fill="#64d2ff" font-family="SF Mono, monospace" font-size="13" font-weight="700">PRE-GATE · CROWD_MASK (area &lt; 1.5%)</text>
+            <text x="896" y="38" text-anchor="end" fill="#cbd5e1" font-size="12.5">초소형 배경·군중은 생성 품질 저하 방지를 위해 분류 제외 (loss 마스킹 좌표만 보존)</text>
+
+            <!-- Plot area: x in [96, 916] (width 820 => 1.0 = 820px), y in [454, 74] (height 380 => 1.0 = 380px) -->
+            <!-- x=0.45 => 96 + 369 = 465 | x=0.60 => 96 + 492 = 588 -->
+            <!-- y=0.70 => 454 - 266 = 188 | y=0.75 => 454 - 285 = 169 -->
+
+            <!-- Region 1: REVIEW (x < 0.45, y < 0.70) -->
+            <rect x="96" y="188" width="369" height="266" fill="rgba(255, 159, 10, 0.13)" />
+            <!-- Region 2: EXT_COLLAB (x < 0.45, y >= 0.70) -->
+            <rect x="96" y="74" width="369" height="114" fill="rgba(191, 90, 242, 0.18)" />
+            <!-- Region 3: COSPLAY / EXT (0.45 <= x < 0.60, y >= 0.75) -->
+            <rect x="465" y="74" width="123" height="95" fill="rgba(255, 69, 58, 0.22)" />
+            <!-- Region 4: ACCEPT (L-shape) -->
+            <polygon points="588,74 916,74 916,454 465,454 465,169 588,169" fill="rgba(48, 209, 88, 0.14)" />
+
+            <!-- Outer Plot Border -->
+            <rect x="96" y="74" width="820" height="380" stroke="rgba(255,255,255,0.22)" stroke-width="1.4" />
+
+            <!-- Inequality Boundary Dashed Lines -->
+            <line x1="465" y1="74" x2="465" y2="454" stroke="#30d158" stroke-width="2" stroke-dasharray="7 5" />
+            <line x1="588" y1="74" x2="588" y2="169" stroke="#ff453a" stroke-width="2" stroke-dasharray="7 5" />
+            <line x1="96" y1="188" x2="465" y2="188" stroke="#bf5af2" stroke-width="2" stroke-dasharray="7 5" />
+            <line x1="465" y1="169" x2="588" y2="169" stroke="#ff453a" stroke-width="2" stroke-dasharray="7 5" />
+
+            <!-- EXT_COLLAB Labels -->
+            <text x="280" y="130" text-anchor="middle" fill="#e9d5ff" font-family="SF Mono, monospace" font-size="17" font-weight="700">EXT_COLLAB</text>
+            <text x="280" y="152" text-anchor="middle" fill="#c084fc" font-family="SF Mono, monospace" font-size="12.5">x &lt; 0.45 · y ≥ 0.70 (화이트리스트)</text>
+            <text x="280" y="172" text-anchor="middle" fill="#d8b4fe" font-size="12">타 작품 콜라보 인물만 자동 분리 (오염 차단)</text>
+
+            <!-- COSPLAY / EXT Labels -->
+            <text x="526" y="108" text-anchor="middle" fill="#fca5a5" font-family="SF Mono, monospace" font-size="13.5" font-weight="700">COSPLAY</text>
+            <text x="526" y="126" text-anchor="middle" fill="#fca5a5" font-family="SF Mono, monospace" font-size="12">/ EXT</text>
+            <text x="526" y="149" text-anchor="middle" fill="#fecaca" font-size="11">외부·코스프레</text>
+            <text x="526" y="162" text-anchor="middle" fill="#fecaca" font-size="11">수동 검수</text>
+
+            <!-- REVIEW Labels -->
+            <text x="280" y="284" text-anchor="middle" fill="#fdba74" font-family="SF Mono, monospace" font-size="20" font-weight="700">REVIEW</text>
+            <text x="280" y="308" text-anchor="middle" fill="#fb923c" font-family="SF Mono, monospace" font-size="12.5">x &lt; 0.45 · y &lt; 0.70 (저신뢰 · 신규 희소)</text>
+            <text x="280" y="330" text-anchor="middle" fill="#fed7aa" font-size="12.5">안경·의상 누락 · 모호한 컷 → 사람이 보고 학습 포함 판정</text>
+
+            <!-- ACCEPT Labels -->
+            <text x="720" y="246" text-anchor="middle" fill="#86efac" font-family="SF Mono, monospace" font-size="24" font-weight="700">ACCEPT</text>
+            <text x="720" y="272" text-anchor="middle" fill="#4ade80" font-family="SF Mono, monospace" font-size="13">x ≥ 0.45 (고신뢰 HBR 영역)</text>
+            <text x="720" y="296" text-anchor="middle" fill="#bbf7d0" font-size="13">검증된 인스턴스만 생성 모델 학습 풀에 자동 편입</text>
+
+            <!-- Plotted Real Sample Dots -->
+            <circle cx="152" cy="94" r="5.5" fill="#bf5af2" stroke="#ffffff" stroke-width="1.5" />
+            <text x="166" y="99" fill="#f5f5f7" font-size="12.5" font-weight="500">Angel Beats! · Persona (eprob 0.99)</text>
+
+            <circle cx="280" cy="382" r="5.5" fill="#ff9f0a" stroke="#ffffff" stroke-width="1.5" />
+            <text x="280" y="408" text-anchor="middle" fill="#fde68a" font-size="12.5" font-weight="500">신규 희소 캐릭터 HNaruse (conf 0.26)</text>
+
+            <circle cx="848" cy="382" r="5.5" fill="#30d158" stroke="#ffffff" stroke-width="1.5" />
+            <text x="848" y="408" text-anchor="end" fill="#bbf7d0" font-size="12.5" font-weight="500">6인 씬 ACCEPT (conf 0.77~0.98)</text>
+
+            <!-- X-axis ticks -->
+            <text x="96" y="480" text-anchor="middle" fill="#64748b" font-family="SF Mono, monospace" font-size="13">0.0</text>
+            <text x="465" y="480" text-anchor="middle" fill="#30d158" font-family="SF Mono, monospace" font-size="14" font-weight="700">0.45</text>
+            <text x="588" y="480" text-anchor="middle" fill="#ff453a" font-family="SF Mono, monospace" font-size="14" font-weight="700">0.60</text>
+            <text x="916" y="480" text-anchor="middle" fill="#64748b" font-family="SF Mono, monospace" font-size="13">1.0</text>
+            <text x="506" y="514" text-anchor="middle" fill="#cbd5e1" font-size="14.5" font-weight="600">HBR-55 Linear Probe 신뢰도 (conf)</text>
+
+            <!-- Y-axis ticks -->
+            <text x="82" y="458" text-anchor="end" fill="#64748b" font-family="SF Mono, monospace" font-size="13">0.0</text>
+            <text x="82" y="195" text-anchor="end" fill="#bf5af2" font-family="SF Mono, monospace" font-size="13" font-weight="700">0.70</text>
+            <text x="82" y="172" text-anchor="end" fill="#ff453a" font-family="SF Mono, monospace" font-size="13" font-weight="700">0.75</text>
+            <text x="82" y="80" text-anchor="end" fill="#64748b" font-family="SF Mono, monospace" font-size="13">1.0</text>
+            <text x="26" y="264" text-anchor="middle" fill="#cbd5e1" font-size="14" font-weight="600" transform="rotate(-90 26 264)">Camie-v2 ONNX 외부 확률 (eprob)</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="gallery-2x2 reveal">
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/safety_collab_angelbeats.jpg"
+            data-caption="Angel Beats! 콜라보 캐릭터를 HBR로 오분류하지 않고 EXT:yui_(angel_beats!) (0.99)로 자동 격리."
+          >
+            <img src="docs/assets/safety_collab_angelbeats.jpg" alt="Angel Beats 콜라보 격리 예시" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap"><strong>콜라보 자동 격리</strong> · <code>EXT:yui_(angel_beats!)</code> (0.99)</figcaption>
+        </figure>
+
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/safety_collab_persona.jpg"
+            data-caption="Persona 콜라보 캐릭터를 원본 Camie-v2 ONNX 교차 검증으로 EXT:yoshizawa_kasumi (0.99) 격리."
+          >
+            <img src="docs/assets/safety_collab_persona.jpg" alt="Persona 콜라보 격리 예시" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap"><strong>콜라보 자동 격리</strong> · <code>EXT:yoshizawa_kasumi</code> (0.99)</figcaption>
+        </figure>
+
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/safety_crowd_mask.jpg"
+            data-caption="화면 면적 1.5% 미만 배경 인물을 CROWD_MASK로 자동 분리하여 오라벨링 방지."
+          >
+            <img src="docs/assets/safety_crowd_mask.jpg" alt="배경 군중 CROWD_MASK 예시" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap">
+            <strong>배경 군중 마스킹</strong> · 면적 1.5% 미만 <code>CROWD_MASK</code>
+            <span style="display:block; margin-top:4px; color:var(--text-tertiary); font-size:0.8rem;">
+              ※ 발전 과제: 다컷 만화에서는 페이지 전체 면적 기준 적용 시 소형 컷 주연도 <code>CROWD_MASK</code>로 잡힐 수 있어, 향후 <strong>패널(컷) 분할 후 상대 면적</strong> 기준으로 고도화 예정.
+            </span>
+          </figcaption>
+        </figure>
+
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/ood_unseen_character.jpg"
+            data-caption="구축 시점 신규 희소 캐릭터(HNaruse)는 최고 확률 0.261에 머물러 오분류되지 않고 REVIEW 대기 풀에 보존."
+          >
+            <img src="docs/assets/ood_unseen_character.jpg" alt="신규 희소 HBR 캐릭터 REVIEW 보존 예시" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap"><strong>신규 희소 캐릭터 보존 (<code>HNaruse</code>)</strong> · 데이터셋 구축 시점 신규 등장, 최고 확률 0.261 → <code>REVIEW</code> 격리</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 5: High-Dimensional Embedding Analysis -->
+  <section id="embedding" class="alt">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">05 · Embedding Space Analysis</div>
+        <h2 class="section-title">1,536-D Embedding 공간 및 결정 경계 분석</h2>
+        <p class="section-desc">
+          Frozen ViT-Base 1,536-D 임베딩 분포(t-SNE), 닮은 캐릭터 쌍의 5-Fold OOF 초평면 결정 마진,
+          그리고 가중치 차이 벡터(<code>Δw = w_A − w_B</code>) 기반 Contrastive Grad-CAM 검증 결과입니다.
+        </p>
+      </div>
+
+      <div class="segmented reveal" role="tablist" aria-label="임베딩 분석 탭">
+        <button class="seg-btn active" data-tab="tab-tsne" role="tab" aria-selected="true">Solo vs Multi t-SNE</button>
+        <button class="seg-btn" data-tab="tab-margins" role="tab" aria-selected="false">1,536-D 닮은 쌍 마진</button>
+        <button class="seg-btn" data-tab="tab-contrastive" role="tab" aria-selected="false">닮은 쌍 Contrastive CAM</button>
+      </div>
+
+      <!-- Tab 1: t-SNE (Full Width) -->
+      <div class="tab-panel active" id="tab-tsne">
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/tsne_12chars_solo_vs_multi.png"
+            data-caption="대표 캐릭터 12명(1,278개) Cosine t-SNE: 파인튜닝 없이도 또렷한 군집이 형성되며, 다인 마이닝 크롭(▲)이 솔로 군집(○) 내부에 정확히 안착합니다."
+          >
+            <img src="docs/assets/tsne_12chars_solo_vs_multi.png" alt="Solo vs Multi-char Crop 2D t-SNE" loading="lazy" />
+          </div>
+        </figure>
+        <div class="emb-points-3">
+          <div class="emb-point">
+            <strong>Frozen 백본 분리도</strong>
+            파인튜닝 없이 <code>Camie-v2</code> 공간에서 55개 클래스 군집 형성
+          </div>
+          <div class="emb-point">
+            <strong>다인 크롭 안착</strong>
+            자동 마이닝 크롭(<code>▲</code>)이 솔로 군집(<code>○</code>) 내부에 노이즈 없이 합류
+          </div>
+          <div class="emb-point">
+            <strong>소수 클래스 보강</strong>
+            초기 16~29장 수준 Long-Tail 캐릭터(<code>akagi_rumi*</code>·<code>irie_miyuki*</code>) 분포 밀도 개선
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: 1536-D OOF Margins (Full Width) -->
+      <div class="tab-panel" id="tab-margins">
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/oof_decision_margins_lookalikes.png"
+            data-caption="중심 코사인 유사도 최상위 닮은 쌍 4개의 5-Fold OOF 1,536-D 결정 초평면 정사영 결과 (99.6% ~ 100.0%)."
+          >
+            <img src="docs/assets/oof_decision_margins_lookalikes.png" alt="Top 4 닮은 쌍 1536-D OOF 결정 마진" loading="lazy" />
+          </div>
+        </figure>
+        <div class="pair-grid-4 tabular">
+          <div class="pair-tile">
+            <div class="names">Seika vs Yuki</div>
+            <div class="sub">흑발·안경 최고 유사 쌍</div>
+            <div class="score"><span class="pair-cos">cos 0.909</span>100.0%</div>
+          </div>
+          <div class="pair-tile">
+            <div class="names">Satomi vs Monaka</div>
+            <div class="sub">유사 화풍·색감 2위 쌍</div>
+            <div class="score"><span class="pair-cos">cos 0.898</span>100.0%</div>
+          </div>
+          <div class="pair-tile">
+            <div class="names">Ruka vs Yuina</div>
+            <div class="sub">2D 중앙 인접 3위 쌍</div>
+            <div class="score"><span class="pair-cos">cos 0.890</span>99.6%</div>
+          </div>
+          <div class="pair-tile">
+            <div class="names">Yuina vs Tsukasa</div>
+            <div class="sub">2D t-SNE 겹침 장발 쌍</div>
+            <div class="score"><span class="pair-cos">cos 0.878</span>99.8%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Pairwise Contrastive Grad-CAM -->
+      <div class="tab-panel" id="tab-contrastive">
+        <p style="color: var(--text-secondary); max-width: 720px; margin-bottom: 28px;">
+          두 클래스의 가중치 차이 벡터(<code>Δw = w_A − w_B</code>)에 Grad-CAM을 적용해,
+          닮은 캐릭터를 구분할 때 모델이 실제로 주목하는 미세 특징을 확인했습니다.
+        </p>
+        <div class="gallery-2x2">
+          <figure class="figure">
+            <div
+              class="figure-media"
+              data-lightbox="docs/assets/contrastive_yuina_vs_tsukasa.jpg"
+              data-caption="Yuina vs Tsukasa Contrastive Grad-CAM: 유이나의 육각형 옆머리핀 vs 츠카사의 땋은 머리·리본에 정확히 집중 (99.8% OOF)."
+            >
+              <img src="docs/assets/contrastive_yuina_vs_tsukasa.jpg" alt="Yuina vs Tsukasa Contrastive Grad-CAM" loading="lazy" />
+            </div>
+            <figcaption class="figure-cap">
+              <strong>Yuina vs Tsukasa (유사 장발 쌍 · 99.8%)</strong> — 육각형 옆머리핀 vs 땋은 머리·리본 차이 포착
+            </figcaption>
+          </figure>
+
+          <figure class="figure">
+            <div
+              class="figure-media"
+              data-lightbox="docs/assets/contrastive_seika_vs_yuki.jpg"
+              data-caption="Seika vs Yuki (흑발·안경 최고 유사 쌍) Contrastive Grad-CAM: 타원형 안경·초커 vs 안경 브릿지·눈매·옆머리 리본 차이 포착 (100% OOF)."
+            >
+              <img src="docs/assets/contrastive_seika_vs_yuki.jpg" alt="Seika vs Yuki Contrastive Grad-CAM" loading="lazy" />
+            </div>
+            <figcaption class="figure-cap">
+              <strong>Seika vs Yuki (흑발·안경 쌍 · 100.0%)</strong> — 타원형 안경·초커 vs 눈매·옆머리 리본 포착
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 6: Grad-CAM XAI (v1->v3 & OOD Failures) -->
+  <section id="gradcam">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">06 · Grad-CAM XAI</div>
+        <h2 class="section-title">Grad-CAM 기반 Attention 변화(v1 → v3) 및 OOD 오탐 분석</h2>
+        <p class="section-desc">
+          ViT-Base 마지막 블록(<code>blocks[-1].norm1</code>)의 Grad-CAM으로 v1 → v3의 Attention 변화를 확인하고,
+          공식 스틸컷 OOD 사례의 오탐·저신뢰 원인을 Contrastive CAM으로 분해했습니다.
+        </p>
+      </div>
+
+      <div class="stack-full reveal">
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/gradcam_v1_vs_v3_akagi_rumi.jpg"
+            data-caption="akagi_rumi Grad-CAM (v1 → v3): v1 오분류(0.062)에서 v3 정답 0.9894로 도약하며 얼굴·헤어에 집중."
+          >
+            <img src="docs/assets/gradcam_v1_vs_v3_akagi_rumi.jpg" alt="Akagi Rumi v1 vs v3 Grad-CAM" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap">
+            <strong><code>akagi_rumi</code> (희소 Long-Tail)</strong> · v1 오분류(0.062) → v3 <strong>0.9894</strong>
+          </figcaption>
+        </figure>
+
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/gradcam_v1_vs_v3_asakura_karen.jpg"
+            data-caption="asakura_karen (v1 → v3) Grad-CAM: v1 오분류(0.123)에서 v3 얼굴·앞머리 집중으로 정답 0.7567 개선."
+          >
+            <img src="docs/assets/gradcam_v1_vs_v3_asakura_karen.jpg" alt="asakura_karen v1 vs v3 Grad-CAM" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap">
+            <strong><code>asakura_karen</code> (Attention 집중 개선)</strong> · v1 오분류(0.123) → v3 <strong>0.7567</strong>
+          </figcaption>
+        </figure>
+      </div>
+
+      <h3 class="subsection-title reveal">OOD 오탐 · 저신뢰 사례 해부 (평소 외형 · OOD 입력 · 경합 대상 · Contrastive Grad-CAM)</h3>
+
+      <figure class="figure reveal">
+        <div
+          class="figure-media"
+          data-lightbox="docs/assets/ood_failure_unified_5col.jpg"
+          data-caption="OOD 오탐·저신뢰 3건 통합 비교: 평소 정답 외형(1열) · OOD 입력(2열) · 경합 캐릭터 외형(3열) · 오탐 요인 CAM(4열) · 정답 근거 CAM(5열)."
+        >
+          <img src="docs/assets/ood_failure_unified_5col.jpg" alt="OOD 3건 외형 레퍼런스 및 Contrastive Grad-CAM 5열 통합 비교" loading="lazy" />
+        </div>
+        <figcaption class="figure-cap">
+          <strong>5열 통합 비교</strong> · 평소 정답(1열) · OOD 입력(2열) · 경합 대상(3열) · <code>Why Comp &gt; GT</code> 오탐 요인(4열) · <code>Why GT &gt; Comp</code> 정답 근거(5열)
+        </figcaption>
+      </figure>
+
+      <div class="notes-3 reveal">
+        <div class="note">
+          <h4>1. 소품 간섭 · <code>minase_ichigo</code></h4>
+          <p>
+            분류기 학습셋에 드문 파란 야구 헬멧을 착용해 동일 금발 계열(<code>carole_reaper</code>)로 밀렸으나(+0.46),
+            금발 머리카락 영역은 정답 쪽으로 반응.
+          </p>
+        </div>
+        <div class="note">
+          <h4>2. 안경 미착용 · <code>izumi_yuki</code></h4>
+          <p>
+            평소 안경 캐릭터인데 안경 벗은 분류기 학습 이미지가 적어 머리색이 비슷한 <code>kanade</code>로 미세 역전(+0.33).
+            단, CAM은 고유 초록 눈매를 포착해 <code>REVIEW</code> 격리.
+          </p>
+        </div>
+        <div class="note">
+          <h4>3. 의상 누락 · <code>asakura_karen</code></h4>
+          <p>
+            평소 시그니처 주황 후드가 없는 목욕씬이라 보수적으로 <code>REVIEW</code>(0.19) 격리됐으나,
+            앞머리·노란 눈 특징으로 Top-1 정답 유지(+1.30).
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 7: Zero-Shot Comic Generalization -->
+  <section id="comic-eval" class="alt">
+    <div class="container">
+      <div class="section-head reveal">
+        <div class="section-kicker">07 · Domain Generalization</div>
+        <h2 class="section-title">만화 미학습 상태에서의 비정형 컷 일반화</h2>
+        <p class="section-desc">
+          만화(<code>is_comic</code>)는 분류기 학습에 전혀 사용하지 않았지만, 비정형 컷·말풍선이 섞인 만화 1,117장에서도
+          <code>ACCEPT</code> 2,212 BBox 기준 메타 태그 일치율 <strong>98.28%</strong>를 확인했습니다.
+        </p>
+      </div>
+
+      <div class="split reveal" style="align-items: start;">
+        <figure class="figure">
+          <div
+            class="figure-media"
+            data-lightbox="docs/assets/comic_fan_irregular.jpg"
+            data-caption="비정형 팬 만화 실측 예시 (post #11106890 · artist: lilyhoney): 만화를 분류기 학습에 쓰지 않았는데도 전신 2명(0.87~0.96) + 하단 3명 ACCEPT. 중간 2컷은 Top-1 정답(date_akari 0.53, nikaidou_misato 0.29)이나 1:1 매칭 슬롯 초과로 REVIEW 격리."
+          >
+            <img src="docs/assets/comic_fan_irregular.jpg" alt="비정형 팬 만화 BBox 실측 예시" style="max-height: 540px; width: 100%; object-fit: contain; background: #0c0e14;" loading="lazy" />
+          </div>
+          <figcaption class="figure-cap">
+            <strong>비정형 팬 만화 실측</strong> (<code>#11106890</code> · <code>artist:lilyhoney</code>) · 만화 미학습 상태에서 5/8 <code>ACCEPT</code>
+          </figcaption>
+        </figure>
+
+        <div class="next-list">
+          <div class="next-item">
+            <span class="next-k">GENERALIZATION · 98.28%</span>
+            <strong>만화 미학습 상태에서도 비정형 컷 식별</strong>
+            <p>컷 테두리를 뚫고 겹치는 전신(<code>0.87~0.96</code>)과 말풍선 인접 인물까지 별도 만화 학습 없이 검출·분류.</p>
+          </div>
+
+          <div class="next-item">
+            <span class="next-k">OBSERVED BOUNDARY</span>
+            <strong>중복 등장 · 극단적 데포르메는 <code>REVIEW</code> 격리</strong>
+            <p>동일 인물 재등장 컷은 1:1 매칭 제약으로, 극단적 데포르메·가림은 저신뢰로 보수적 <code>REVIEW</code> 처리.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Closing Band: Next Step · Stage 3 -->
+  <section id="next" style="padding: 96px 0;">
+    <div class="container reveal" style="max-width: 820px; text-align: center;">
+      <div class="section-kicker">Next Step · Stage 3</div>
+      <h2 class="section-title" style="margin-bottom: 16px;">VLM Layout Captioning으로<br />데이터셋 파이프라인 완성</h2>
+      <p class="section-desc" style="margin: 0 auto;">
+        확정된 SQLite <code>ACCEPT</code> <strong>15,264 BBox</strong>와 캐릭터 ID를 VLM에 함께 입력해 인물별 정합성 있는 캡션을 생성하고,
+        <strong>MOSS-Image JSON · LoRA 학습셋</strong>으로 최종 연결할 예정입니다.
+      </p>
+    </div>
+  </section>
+
+  <!-- Minimal Footer -->
+  <footer>
+    <div class="container footer-inner">
+      <div>
+        <strong style="color: var(--text-primary);">HBR Generative Dataset Pipeline &amp; Character Classifier</strong>
+        <span> · Python · PyTorch · ONNX Runtime · SQLite</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://huggingface.co/Kamome33/hbr-character-classifier" target="_blank" rel="noopener noreferrer">HF Model</a>
+        <a href="https://huggingface.co/datasets/Kamome33/hbr-dataset-master" target="_blank" rel="noopener noreferrer">HF Dataset</a>
+        <a href="README.md">README</a>
+        <a href="#top">맨 위로 ↑</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Fullscreen Lightbox -->
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="이미지 확대 보기">
+    <button class="lb-btn lb-close" id="lb-close" aria-label="닫기">×</button>
+    <button class="lb-btn lb-prev" id="lb-prev" aria-label="이전">‹</button>
+    <div class="lightbox-inner">
+      <img class="lightbox-img" id="lb-img" src="" alt="" />
+      <div class="lightbox-caption" id="lb-caption"></div>
+    </div>
+    <button class="lb-btn lb-next" id="lb-next" aria-label="다음">›</button>
+  </div>
+
+  <script>
+    (() => {
+      /* 0. Render Real 55-Class Long-Tail Distribution SVG Chart */
+      const CLASS_DIST = [
+        ["kayamori_ruka",148,102],["asakura_karen",146,104],["kunimi_tama",146,104],["natsume_inori",145,105],["tojo_tsukasa",145,105],
+        ["izumi_yuki",144,106],["ogasahara_hisame",143,107],["shirakawa_yuina",143,107],["aikawa_megumi",142,108],["aoi_erika",141,109],
+        ["kiryuu_miya",141,109],["ooshima_isuzu",138,78],["yamawaki_bon_ivar",136,114],["hiiragi_kozue",124,87],["ooshima_muua",124,49],
+        ["charlotta_skopovskaya",115,86],["li_yingxia",111,51],["minase_sumomo",104,110],["satsuki_mari",103,120],["kanzaki_adelheid",93,116],
+        ["sugawara_chie",91,74],["nanase_nanami",85,99],["nikaidou_misato",81,97],["bungo_yayoi",74,144],["date_akari",70,91],
+        ["higuchi_seika",69,121],["tenne_miko",67,70],["yanagi_mion",64,74],["hanamura_shiki",63,67],["mizuhara_aina",62,45],
+        ["ooshima_ichiko",61,65],["tezuka_saki",59,94],["ishii_iroha",57,50],["matsuoka_chiroru",57,44],["irene_redmayne",56,61],
+        ["sakuraba_seira",53,45],["kura_satomi",52,85],["ooshima_yotsuha",47,63],["minase_ichigo",46,181],["vritika_balakrishnan",46,49],
+        ["maruyama_kanata",44,75],["murofushi_risa",44,38],["maria_de_angelis",43,57],["mikoto_fubuki",43,43],["carole_reaper",40,41],
+        ["kurosawa_maki",37,42],["ooshima_minori",35,28],["asami_makiko",32,64],["akagi_rumi",29,28],["tsukishiro_monaka",26,79],
+        ["tachibana_kanade",23,27],["ooshima_niina",19,45],["irie_miyuki",16,5],["byakko",12,11],["nakamura_yuri",10,19]
+      ];
+      const TAIL_SET = new Set(["akagi_rumi", "irie_miyuki", "byakko", "nakamura_yuri"]);
+      const chart = document.getElementById("dist-chart");
+      const readout = document.getElementById("chart-readout");
+      if (chart) {
+        const ns = "http://www.w3.org/2000/svg";
+        const padL = 42, padR = 16, padT = 18, padB = 34;
+        const W = 1000 - padL - padR;
+        const H = 245 - padT - padB;
+        const maxY = 260;
+        const yOf = (v) => padT + H - (v / maxY) * H;
+
+        // Horizontal grid & cap=250 line
+        [0, 100, 200, 250].forEach((val) => {
+          const y = yOf(val);
+          const line = document.createElementNS(ns, "line");
+          line.setAttribute("x1", padL);
+          line.setAttribute("x2", 1000 - padR);
+          line.setAttribute("y1", y);
+          line.setAttribute("y2", y);
+          line.setAttribute("stroke", val === 250 ? "rgba(255,159,10,0.45)" : "rgba(255,255,255,0.07)");
+          if (val === 250) line.setAttribute("stroke-dasharray", "5 4");
+          chart.appendChild(line);
+
+          const txt = document.createElementNS(ns, "text");
+          txt.setAttribute("x", padL - 8);
+          txt.setAttribute("y", y + 4);
+          txt.setAttribute("text-anchor", "end");
+          txt.setAttribute("fill", val === 250 ? "#ff9f0a" : "#6e6e73");
+          txt.setAttribute("font-size", "10.5");
+          txt.setAttribute("font-family", "SF Mono, monospace");
+          txt.textContent = val;
+          chart.appendChild(txt);
+        });
+
+        const step = W / CLASS_DIST.length;
+        const bw = Math.max(8, step - 4);
+
+        CLASS_DIST.forEach(([name, solo, multi], i) => {
+          const g = document.createElementNS(ns, "g");
+          g.setAttribute("class", "chart-bar-g");
+          const x = padL + i * step + 2;
+          const isTail = TAIL_SET.has(name);
+
+          // Multi (top stack)
+          const rM = document.createElementNS(ns, "rect");
+          rM.setAttribute("x", x);
+          rM.setAttribute("y", yOf(solo + multi));
+          rM.setAttribute("width", bw);
+          rM.setAttribute("height", Math.max(1, yOf(solo) - yOf(solo + multi)));
+          rM.setAttribute("rx", "2");
+          rM.setAttribute("fill", isTail ? "#ff9f0a" : "#30d158");
+          rM.setAttribute("opacity", isTail ? "0.95" : "0.75");
+          g.appendChild(rM);
+
+          // Solo (bottom stack)
+          const rS = document.createElementNS(ns, "rect");
+          rS.setAttribute("x", x);
+          rS.setAttribute("y", yOf(solo));
+          rS.setAttribute("width", bw);
+          rS.setAttribute("height", Math.max(1, yOf(0) - yOf(solo)));
+          rS.setAttribute("rx", "2");
+          rS.setAttribute("fill", isTail ? "#fb923c" : "#2997ff");
+          rS.setAttribute("opacity", isTail ? "0.95" : "0.85");
+          g.appendChild(rS);
+
+          g.addEventListener("mouseenter", () => {
+            readout.textContent = `${name}: Solo ${solo} + Multi ${multi} = ${solo + multi}`;
+          });
+          chart.appendChild(g);
+        });
+
+        // X-axis anchor labels
+        [[0, "최다 #1 · kayamori_ruka (250)"], [27, "중간 #28 (138)"], [54, "최소 Long-Tail #55 · irie_miyuki (21)"]].forEach(([idx, label]) => {
+          const t = document.createElementNS(ns, "text");
+          t.setAttribute("x", idx === 0 ? padL : idx === 54 ? 1000 - padR : padL + idx * step);
+          t.setAttribute("y", 236);
+          t.setAttribute("text-anchor", idx === 0 ? "start" : idx === 54 ? "end" : "middle");
+          t.setAttribute("fill", idx === 54 ? "#ff9f0a" : "#6e6e73");
+          t.setAttribute("font-size", "11");
+          t.setAttribute("font-family", "SF Mono, monospace");
+          t.textContent = label;
+          chart.appendChild(t);
+        });
+      }
+
+      /* Segmented Control */
+      const segBtns = document.querySelectorAll(".seg-btn");
+      const panels = document.querySelectorAll(".tab-panel");
+      segBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.tab;
+          segBtns.forEach((b) => {
+            b.classList.toggle("active", b === btn);
+            b.setAttribute("aria-selected", b === btn ? "true" : "false");
+          });
+          panels.forEach((p) => p.classList.toggle("active", p.id === id));
+        });
+      });
+
+      /* Lightbox */
+      const items = Array.from(document.querySelectorAll("[data-lightbox]"));
+      const lb = document.getElementById("lightbox");
+      const lbImg = document.getElementById("lb-img");
+      const lbCap = document.getElementById("lb-caption");
+      let idx = 0;
+
+      const open = (i) => {
+        idx = (i + items.length) % items.length;
+        lbImg.src = items[idx].dataset.lightbox;
+        lbImg.alt = items[idx].querySelector("img")?.alt || "";
+        lbCap.textContent = items[idx].dataset.caption || "";
+        lb.classList.add("open");
+        document.body.style.overflow = "hidden";
+      };
+
+      const close = () => {
+        lb.classList.remove("open");
+        document.body.style.overflow = "";
+      };
+
+      items.forEach((el, i) => el.addEventListener("click", () => open(i)));
+      document.getElementById("lb-close").addEventListener("click", close);
+      document.getElementById("lb-prev").addEventListener("click", () => open(idx - 1));
+      document.getElementById("lb-next").addEventListener("click", () => open(idx + 1));
+      lb.addEventListener("click", (e) => { if (e.target === lb) close(); });
+      document.addEventListener("keydown", (e) => {
+        if (!lb.classList.contains("open")) return;
+        if (e.key === "Escape") close();
+        if (e.key === "ArrowLeft") open(idx - 1);
+        if (e.key === "ArrowRight") open(idx + 1);
+      });
+
+      /* Scroll Reveal */
+      const els = document.querySelectorAll(".reveal");
+      if ("IntersectionObserver" in window) {
+        const io = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                e.target.classList.add("visible");
+                io.unobserve(e.target);
+              }
+            });
+          },
+          { threshold: 0.08 }
+        );
+        els.forEach((el) => io.observe(el));
+      } else {
+        els.forEach((el) => el.classList.add("visible"));
+      }
+    })();
+  </script>
+</body>
+</html>

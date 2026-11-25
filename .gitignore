@@ -1,0 +1,43 @@
+# Python & virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets & credentials (NEVER commit)
+HF.txt
+.env
+.env.*
+*.token
+*.key
+*.pem
+
+# Local-only agent & environment guidelines
+AGENTS.md
+
+# Large local datasets, SQLite DB, embeddings & test sets (hosted on HF Gated repo)
+data/images/
+data/db/
+data/embeddings/
+data/test_sets/
+!data/**/.gitkeep
+
+# Generated inference visualizations, Grad-CAM plots, caption tests & HF export staging
+outputs/
+!outputs/.gitkeep
+
+# Archived legacy model weights (active v3 .npz is ~630 KB and may optionally be tracked)
+models/archive/
+# Uncomment the line below to ignore all model weights as well:
+# models/*.npz
