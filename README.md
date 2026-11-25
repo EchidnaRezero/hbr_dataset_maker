@@ -3,21 +3,12 @@
 > 이미지 생성 모델 학습(LoRA 파인튜닝 · MOSS-Image 등 Layout-Conditioned 데이터 포맷)을 위해  
 > 헤븐 번즈 레드(55명) 캐릭터를 인스턴스(BBox) 단위로 검출 · 분류 · 필터링하는 파이프라인입니다.
 
-[![Open Portfolio Showcase](https://img.shields.io/badge/Portfolio_Showcase-Open_GitHub_Pages-2997ff?style=for-the-badge&logo=githubpages&logoColor=white)](https://echidnarezero.github.io/hbr_dataset_maker/)
+[![Showcase](https://img.shields.io/badge/Showcase-2997ff?style=for-the-badge&logo=githubpages&logoColor=white)](https://echidnarezero.github.io/hbr_dataset_maker/)
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-CUDA-EE4C2C?logo=pytorch&logoColor=white)
 ![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-GPU-005CED?logo=onnx&logoColor=white)
 ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)
-
----
-
-## Showcase
-
-아키텍처 텐서 구조, 55-Class Long-Tail 분포, 5-Tier Safety-Valve 결정 평면, 1,536-D Embedding(t-SNE · OOF 마진) 및 Grad-CAM 분석 결과는 아래 쇼케이스 페이지에서 확인할 수 있습니다.
-
-- **Web Showcase**: [https://echidnarezero.github.io/hbr_dataset_maker/](https://echidnarezero.github.io/hbr_dataset_maker/)
-- **Local Preview**: 저장소 루트의 [index.html](index.html)을 브라우저로 바로 열면 별도 서버 없이 동일하게 확인 가능합니다.
 
 ---
 
