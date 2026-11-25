@@ -40,4 +40,4 @@
 2. **`Still_MC05B_05_09_00_003` (`izumi_yuki` 안경 미착용 → `tachibana_kanade` 오탐, margin `+0.33`)**: 연보라·은발 계열 머리의 유키가 안경을 벗자 **밝은 연보라 머리카락**이 `Kanade` 쪽으로 미세하게 앞섰지만, `Yuki > Kanade` CAM은 안경 없이도 **유키 고유의 초록 양쪽 눈매**에 정밀하게 반응함 (`+0.33` 근소한 차이로 `REVIEW` 격리).
 3. **`Still_MC03_08_10_00_002` (`asakura_karen` 목욕씬 저신뢰 정답, `#2 yanagi_mion` 대비 margin `+1.30`)**: 시그니처 주황 후드 없이 어두운 머리·노란 눈만 드러난 상황에서 `REVIEW`(`0.19`)로 보수적 격리되었지만, `Karen > Mion` CAM은 **카렌 고유의 일자 앞머리·노란 눈**을 정확히 포착해 Top-1은 정답을 유지함.
 
-![v3 오탐 및 저신뢰 사례 3건 Contrastive Grad-CAM](../assets/contrastive_failure_cases.jpg)
+![v3 오탐 및 저신뢰 사례 3건 5열 통합 비교 (평소 외형 · OOD 입력 · 경합 대상 · Contrastive Grad-CAM)](../assets/ood_failure_unified_5col.jpg)
