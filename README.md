@@ -1,7 +1,11 @@
 # HBR Generative Dataset Pipeline & Character Classifier
 
-> **이미지 생성 모델(LoRA · MOSS-Image 등 Layout-Conditioned DiT) 학습용 고품질 캐릭터 데이터셋**을 자동 구축하기 위한 End-to-End Vision Pipeline입니다.  
+> **이미지 생성 모델 학습(LoRA 파인튜닝 · MOSS-Image 등 Layout-Conditioned 포맷)**을 위한 고품질 캐릭터 데이터셋 자동 구축 파이프라인입니다.  
 > **헤븐 번즈 레드(Heaven Burns Red)** 55명 캐릭터를 인스턴스(BBox) 단위로 Detection · Classification · Filtering하고, 후속 VLM Captioning까지 일관되게 관리합니다.
+
+[![Portfolio Showcase](https://img.shields.io/badge/Portfolio_Showcase-GitHub_Pages-2997ff?style=for-the-badge&logo=githubpages&logoColor=white)](https://echidnarezero.github.io/hbr_dataset_maker/)
+
+> **Interactive Showcase (GitHub Pages):** [https://echidnarezero.github.io/hbr_dataset_maker/](https://echidnarezero.github.io/hbr_dataset_maker/) *(저장소 공개 및 Pages 활성화 후 바로 열람 가능 · 로컬에서는 [index.html](index.html) 직접 오픈)*
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-CUDA-EE4C2C?logo=pytorch&logoColor=white)
